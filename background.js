@@ -11,7 +11,7 @@ const defaultProfile = {
 
 const defaultProviderConfig = {
   tier: "free",
-  backendBaseUrl: "http://localhost:8000",
+  backendBaseUrl: "https://imo-ashy.vercel.app/",
   backendAccessToken: "",
   useBackendProxy: true,
   preferredProvider: "auto",
