@@ -348,6 +348,76 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "IMO_DETECT_LANGUAGE") {
+    getFullConfig().then(async ({ providerConfig }) => {
+      try {
+        const baseUrl = normalizeBackendBaseUrl(providerConfig.backendBaseUrl);
+        if (!baseUrl) throw new Error("Backend API URL is not configured.");
+        const headers = { "Content-Type": "application/json" };
+        if (providerConfig.backendAccessToken) {
+          headers.Authorization = `Bearer ${providerConfig.backendAccessToken}`;
+        }
+        const response = await fetch(`${baseUrl}/api/imo/detect-language`, {
+          method: "POST", headers,
+          body: JSON.stringify({ text: msg.text })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+        sendResponse(data);
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true;
+  }
+
+  if (msg.type === "IMO_READ_ALOUD") {
+    getFullConfig().then(async ({ providerConfig }) => {
+      try {
+        const baseUrl = normalizeBackendBaseUrl(providerConfig.backendBaseUrl);
+        if (!baseUrl) throw new Error("Backend API URL is not configured.");
+        const headers = { "Content-Type": "application/json" };
+        if (providerConfig.backendAccessToken) {
+          headers.Authorization = `Bearer ${providerConfig.backendAccessToken}`;
+        }
+        const response = await fetch(`${baseUrl}/api/imo/read-aloud`, {
+          method: "POST", headers,
+          body: JSON.stringify({ text: msg.text, voice: msg.voice || "Idera" })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+        sendResponse(data);
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true;
+  }
+
+  if (msg.type === "IMO_VOICE_TO_FORM") {
+    getFullConfig().then(async ({ providerConfig }) => {
+      try {
+        const baseUrl = normalizeBackendBaseUrl(providerConfig.backendBaseUrl);
+        if (!baseUrl) throw new Error("Backend API URL is not configured.");
+        const headers = { "Content-Type": "application/json" };
+        if (providerConfig.backendAccessToken) {
+          headers.Authorization = `Bearer ${providerConfig.backendAccessToken}`;
+        }
+        // Audio arrives as base64-encoded string from content script
+        const response = await fetch(`${baseUrl}/api/imo/voice-to-form-base64`, {
+          method: "POST", headers,
+          body: JSON.stringify({ audio_base64: msg.audioBase64 })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+        sendResponse(data);
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true;
+  }
+
   if (msg.type === "PING") {
     sendResponse({ alive: true });
     return true;

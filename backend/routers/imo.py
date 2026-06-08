@@ -58,3 +58,32 @@ async def voice_to_form_endpoint(audio: UploadFile = File(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Voice-to-form failed: {exc}") from exc
+
+
+class VoiceToFormBase64Request(BaseModel):
+    audio_base64: str = Field(..., min_length=1)
+
+
+@router.post("/voice-to-form-base64")
+async def voice_to_form_base64_endpoint(body: VoiceToFormBase64Request):
+    """Accept base64-encoded audio (for service worker relay from content scripts)."""
+    import base64 as b64
+
+    try:
+        audio_bytes = b64.b64decode(body.audio_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 audio data.")
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Decoded audio is empty.")
+
+    try:
+        result = await asyncio.to_thread(transcribe_voice_audio, audio_bytes)
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=502, detail="Voice transcription returned invalid JSON.")
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Voice-to-form failed: {exc}") from exc
+

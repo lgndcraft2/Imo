@@ -450,6 +450,44 @@ color:${C.g600}!important;transition:all .15s!important;text-align:center!import
 font-family:inherit!important;line-height:1.3!important}
 .sp-diff-btn:hover{border-color:${C.greenMid}!important;background:${C.greenLight}!important;color:${C.greenDeep}!important}
 .sp-diff-btn.s-active{background:${C.green}!important;border-color:${C.green}!important;color:white!important}
+
+/* VOICE / SPEECH ROW */
+.sp-voice-row{padding:10px 18px 12px!important;border-bottom:1px solid ${C.g100}!important}
+.sp-voice-label{font-size:10px!important;font-weight:600!important;
+letter-spacing:.08em!important;text-transform:uppercase!important;
+color:${C.g400}!important;display:block!important;margin-bottom:7px!important}
+.sp-voice-select{width:100%!important;padding:7px 10px!important;
+border-radius:8px!important;border:1.5px solid ${C.g200}!important;
+background:${C.white}!important;font-size:11px!important;font-family:inherit!important;
+color:${C.g900}!important;margin-bottom:8px!important;outline:none!important;
+transition:border-color .15s!important}
+.sp-voice-select:focus{border-color:${C.green}!important}
+.sp-voice-actions{display:flex!important;gap:5px!important}
+.sp-voice-btn{flex:1!important;padding:7px 4px!important;border-radius:8px!important;
+border:1.5px solid ${C.g200}!important;background:${C.white}!important;
+font-size:10px!important;font-weight:600!important;cursor:pointer!important;
+color:${C.g600}!important;transition:all .15s!important;text-align:center!important;
+font-family:inherit!important;line-height:1.3!important;display:flex!important;
+align-items:center!important;justify-content:center!important;gap:4px!important}
+.sp-voice-btn:hover{border-color:${C.greenMid}!important;background:${C.greenLight}!important;
+color:${C.greenDeep}!important}
+.sp-voice-btn.s-active{background:${C.green}!important;border-color:${C.green}!important;
+color:white!important}
+.sp-voice-btn.s-recording{animation:imo-rec-pulse 1s ease-in-out infinite!important;
+border-color:${C.red}!important;color:${C.red}!important}
+.sp-voice-btn:disabled{opacity:.5!important;cursor:not-allowed!important}
+@keyframes imo-rec-pulse{0%,100%{background:${C.white}}50%{background:#fff5f5}}
+
+/* PER-CARD TTS BUTTON */
+.sc-tts-btn{width:26px!important;height:26px!important;border-radius:50%!important;
+border:none!important;background:${C.g100}!important;cursor:pointer!important;
+font-size:13px!important;color:${C.g600}!important;display:flex!important;
+align-items:center!important;justify-content:center!important;
+transition:background .15s,color .15s!important;flex-shrink:0!important;
+font-family:inherit!important;line-height:1!important;margin-right:4px!important}
+.sc-tts-btn:hover{background:${C.greenLight}!important;color:${C.green}!important}
+.sc-tts-btn.s-playing{background:${C.green}!important;color:white!important}
+.sc-tts-btn:disabled{opacity:.4!important;cursor:not-allowed!important}
   `;
   document.head.appendChild(s);
 }
@@ -489,6 +527,207 @@ function extractFullPageText() {
     'script,style,nav,footer,header,#imo-fab,#imo-panel,#imo-dock'
   ).forEach(e => e.remove());
   return clone.innerText.trim().slice(0, 500000);
+}
+
+// ================================================================
+// SPEECH / TTS HELPERS
+// ================================================================
+
+// Currently playing audio for the panel "Read Aloud" button
+let imoPageAudio = null;
+// Currently playing audio per-card (keyed by section index)
+const imoCardAudios = new Map();
+
+function imoGetSelectedVoice() {
+  const sel = document.getElementById('sp-voice-select');
+  return sel ? sel.value : 'Idera';
+}
+
+function imoStopPageAudio() {
+  if (imoPageAudio) {
+    imoPageAudio.pause();
+    imoPageAudio.currentTime = 0;
+    imoPageAudio = null;
+  }
+  const btn = document.getElementById('sp-read-aloud-btn');
+  if (btn) { btn.classList.remove('s-active'); btn.textContent = '🔊 Read Aloud'; }
+}
+
+function imoStopCardAudio(idx) {
+  const audio = imoCardAudios.get(idx);
+  if (audio) {
+    audio.pause();
+    audio.currentTime = 0;
+    imoCardAudios.delete(idx);
+  }
+}
+
+function imoStopAllCardAudio() {
+  for (const [idx] of imoCardAudios) imoStopCardAudio(idx);
+}
+
+function imoSetVoiceBusy(busy) {
+  document.querySelectorAll('.sp-voice-btn').forEach(b => b.disabled = busy);
+}
+
+async function imoDetectLanguage() {
+  imoSetVoiceBusy(true);
+  showPanelHint('Detecting language...');
+  const text = extractFullPageText();
+  if (!text) {
+    showPanelHint('No visible text found on this page.', true);
+    imoSetVoiceBusy(false);
+    return;
+  }
+  chrome.runtime.sendMessage({ type: 'IMO_DETECT_LANGUAGE', text }, (res) => {
+    imoSetVoiceBusy(false);
+    if (res?.error) {
+      showPanelHint(res.error, true);
+      return;
+    }
+    const confidence = typeof res.confidence === 'number'
+      ? `${(res.confidence * 100).toFixed(1)}%` : '—';
+    showPanelHint(`Language: ${res.language || 'unknown'} (${confidence})`);
+  });
+}
+
+async function imoReadAloud(text, voice) {
+  if (!text) {
+    showPanelHint('No text to read.', true);
+    return null;
+  }
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'IMO_READ_ALOUD', text, voice },
+      (res) => {
+        if (res?.error) {
+          showPanelHint(res.error, true);
+          resolve(null);
+          return;
+        }
+        const audioBase64 = res?.audio_base64 || res?.audioBase64;
+        if (!audioBase64) {
+          showPanelHint('Backend did not return audio.', true);
+          resolve(null);
+          return;
+        }
+        const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
+        resolve(audio);
+      }
+    );
+  });
+}
+
+async function imoReadAloudPage() {
+  if (imoPageAudio) { imoStopPageAudio(); return; }
+  imoSetVoiceBusy(true);
+  showPanelHint('Preparing audio...');
+  const text = extractFullPageText();
+  if (!text) {
+    showPanelHint('No visible text found on this page.', true);
+    imoSetVoiceBusy(false);
+    return;
+  }
+  const voice = imoGetSelectedVoice();
+  const audio = await imoReadAloud(text.slice(0, 4000), voice);
+  imoSetVoiceBusy(false);
+  if (!audio) return;
+  imoPageAudio = audio;
+  const btn = document.getElementById('sp-read-aloud-btn');
+  if (btn) { btn.classList.add('s-active'); btn.textContent = '⏹ Stop'; }
+  showPanelHint(`Playing (${voice})...`);
+  audio.addEventListener('ended', () => imoStopPageAudio());
+  audio.addEventListener('error', () => {
+    showPanelHint('Audio playback failed.', true);
+    imoStopPageAudio();
+  });
+  audio.play().catch(() => {
+    showPanelHint('Audio playback blocked by browser.', true);
+    imoStopPageAudio();
+  });
+}
+
+async function imoVoiceInput() {
+  if (!window.isSecureContext) {
+    showPanelHint('Voice input requires a secure (HTTPS) page.', true);
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showPanelHint('Microphone access is not supported in this browser.', true);
+    return;
+  }
+
+  const micBtn = document.getElementById('sp-voice-input-btn');
+  imoSetVoiceBusy(true);
+  if (micBtn) micBtn.classList.add('s-recording');
+  showPanelHint('Recording... (5 seconds)');
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showPanelHint('Microphone permission denied.', true);
+    imoSetVoiceBusy(false);
+    if (micBtn) micBtn.classList.remove('s-recording');
+    return;
+  }
+
+  const options = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
+    ? { mimeType: 'audio/webm' } : undefined;
+  const recorder = new MediaRecorder(stream, options);
+  const chunks = [];
+
+  recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+  recorder.onerror = () => {
+    stream.getTracks().forEach(t => t.stop());
+    showPanelHint('Recording failed.', true);
+    imoSetVoiceBusy(false);
+    if (micBtn) micBtn.classList.remove('s-recording');
+  };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    if (micBtn) micBtn.classList.remove('s-recording');
+    if (!chunks.length) {
+      showPanelHint('No audio captured.', true);
+      imoSetVoiceBusy(false);
+      return;
+    }
+    showPanelHint('Transcribing voice...');
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result.split(',')[1];
+      chrome.runtime.sendMessage({ type: 'IMO_VOICE_TO_FORM', audioBase64: base64 }, (res) => {
+        imoSetVoiceBusy(false);
+        if (res?.error) {
+          showPanelHint(res.error, true);
+          return;
+        }
+        // Try to fill form fields on the page
+        const fields = res || {};
+        let filled = 0;
+        for (const [key, value] of Object.entries(fields)) {
+          if (value === null || value === undefined) continue;
+          const inputs = document.querySelectorAll('input, textarea, select');
+          for (const input of inputs) {
+            const name = (input.name || input.id || input.placeholder || '').toLowerCase();
+            if (name.includes(key.toLowerCase()) || key.toLowerCase().includes(name)) {
+              input.value = String(value);
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              filled++;
+              break;
+            }
+          }
+        }
+        showPanelHint(`Voice input applied to ${filled} field${filled === 1 ? '' : 's'}.`);
+      });
+    };
+    reader.readAsDataURL(blob);
+  };
+
+  recorder.start();
+  setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, 5000);
 }
 
 // ================================================================
@@ -747,7 +986,10 @@ function openCard(idx) {
         </div>
         <span class="sc-section-name">${sec.title}</span>
       </div>
-      <button class="sc-close">✕</button>
+      <div style="display:flex!important;align-items:center!important;gap:4px!important">
+        <button class="sc-tts-btn" title="Read this card aloud" disabled>🔊</button>
+        <button class="sc-close">✕</button>
+      </div>
     </div>
     <div class="sc-loading">
       <div class="sc-spinner"></div>
@@ -857,11 +1099,62 @@ function showCardContent(card, sec, html) {
     updateProgressRing(sec);
   });
 
+  // Enable per-card TTS button now that content is loaded
+  const ttsBtn = card.querySelector('.sc-tts-btn');
+  if (ttsBtn) {
+    ttsBtn.disabled = false;
+    ttsBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const cardIdx = sec.idx;
+      // Toggle: if already playing this card, stop it
+      if (imoCardAudios.has(cardIdx)) {
+        imoStopCardAudio(cardIdx);
+        ttsBtn.classList.remove('s-playing');
+        ttsBtn.textContent = '🔊';
+        return;
+      }
+      // Stop any other card audio first
+      imoStopAllCardAudio();
+      document.querySelectorAll('.sc-tts-btn.s-playing').forEach(b => {
+        b.classList.remove('s-playing'); b.textContent = '🔊';
+      });
+      // Get card text
+      const cardText = body.innerText || body.textContent || '';
+      if (!cardText.trim()) return;
+      ttsBtn.disabled = true;
+      ttsBtn.textContent = '⏳';
+      const voice = imoGetSelectedVoice();
+      const audio = await imoReadAloud(cardText.slice(0, 4000), voice);
+      ttsBtn.disabled = false;
+      if (!audio) { ttsBtn.textContent = '🔊'; return; }
+      imoCardAudios.set(cardIdx, audio);
+      ttsBtn.classList.add('s-playing');
+      ttsBtn.textContent = '⏹';
+      audio.addEventListener('ended', () => {
+        imoCardAudios.delete(cardIdx);
+        ttsBtn.classList.remove('s-playing');
+        ttsBtn.textContent = '🔊';
+      });
+      audio.addEventListener('error', () => {
+        imoCardAudios.delete(cardIdx);
+        ttsBtn.classList.remove('s-playing');
+        ttsBtn.textContent = '🔊';
+      });
+      audio.play().catch(() => {
+        imoCardAudios.delete(cardIdx);
+        ttsBtn.classList.remove('s-playing');
+        ttsBtn.textContent = '🔊';
+      });
+    });
+  }
+
   injectFeedbackStrip(card, sec);
 }
 
 function closeCard() {
   if (!S.activeCard) return;
+  // Stop any TTS playing for this card
+  if (S.activeCardIdx !== null) imoStopCardAudio(S.activeCardIdx);
   S.activeCard.classList.remove('s-visible');
   const card = S.activeCard;
   setTimeout(() => card.remove(), 280);
@@ -1406,6 +1699,32 @@ function buildFloatingUI() {
       <button class="sp-tool-btn" id="sp-focus-btn" type="button">Focus</button>
       <button class="sp-tool-btn" id="sp-bionic-btn" type="button">Bionic</button>
     </div>
+    <div class="sp-voice-row">
+      <span class="sp-voice-label">Voice & Speech</span>
+      <select class="sp-voice-select" id="sp-voice-select">
+        <option value="Idera">Idera</option>
+        <option value="Emma">Emma</option>
+        <option value="Zainab">Zainab</option>
+        <option value="Osagie">Osagie</option>
+        <option value="Wura">Wura</option>
+        <option value="Jude">Jude</option>
+        <option value="Chinenye">Chinenye</option>
+        <option value="Tayo">Tayo</option>
+        <option value="Regina">Regina</option>
+        <option value="Femi">Femi</option>
+        <option value="Adaora">Adaora</option>
+        <option value="Umar">Umar</option>
+        <option value="Mary">Mary</option>
+        <option value="Nonso">Nonso</option>
+        <option value="Remi">Remi</option>
+        <option value="Adam">Adam</option>
+      </select>
+      <div class="sp-voice-actions">
+        <button class="sp-voice-btn" id="sp-detect-lang-btn" type="button">🌍 Detect</button>
+        <button class="sp-voice-btn" id="sp-read-aloud-btn" type="button">🔊 Read Aloud</button>
+        <button class="sp-voice-btn" id="sp-voice-input-btn" type="button">🎤 Voice</button>
+      </div>
+    </div>
     <div class="sp-difficulty-row" id="sp-difficulty-row" style="display:none">
       <span class="sp-difficulty-label">Today's reading feel</span>
       <div class="sp-difficulty-opts">
@@ -1483,6 +1802,11 @@ function buildFloatingUI() {
       }
     }
   });
+
+  // Speech buttons
+  document.getElementById('sp-detect-lang-btn')?.addEventListener('click', imoDetectLanguage);
+  document.getElementById('sp-read-aloud-btn')?.addEventListener('click', imoReadAloudPage);
+  document.getElementById('sp-voice-input-btn')?.addEventListener('click', imoVoiceInput);
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeCard();
