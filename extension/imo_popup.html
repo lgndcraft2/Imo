@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ìmọ̀</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5efe7;
+      --panel: rgba(255, 255, 255, 0.82);
+      --text: #1f2933;
+      --muted: #607080;
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --danger: #b42318;
+      --border: rgba(31, 41, 51, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 340px;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 40%),
+        radial-gradient(circle at bottom right, rgba(180, 35, 24, 0.12), transparent 35%),
+        var(--bg);
+      color: var(--text);
+    }
+    .shell {
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 14px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .card {
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 12px 36px rgba(31, 41, 51, 0.08);
+    }
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+    .row {
+      display: grid;
+      gap: 8px;
+    }
+    label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    select, button {
+      font: inherit;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      background: white;
+      color: var(--text);
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+    button {
+      padding: 10px 12px;
+      cursor: pointer;
+      background: white;
+      color: var(--text);
+      font-weight: 700;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(31, 41, 51, 0.08);
+    }
+    button.primary {
+      background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+      color: white;
+      border-color: transparent;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 12px;
+      min-height: 20px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .status.error {
+      color: var(--danger);
+    }
+    .result {
+      margin-top: 10px;
+      min-height: 72px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.72);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .hint {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div>
+        <div class="title">Ìmọ̀</div>
+        <div class="subtitle">Nigerian language access tools</div>
+      </div>
+    </div>
+
+    <div class="card stack">
+      <div class="row">
+        <label for="voice-select">Read Aloud voice</label>
+        <select id="voice-select">
+          <option value="Idera">Idera</option>
+          <option value="Emma">Emma</option>
+          <option value="Zainab">Zainab</option>
+          <option value="Osagie">Osagie</option>
+          <option value="Wura">Wura</option>
+          <option value="Jude">Jude</option>
+          <option value="Chinenye">Chinenye</option>
+          <option value="Tayo">Tayo</option>
+          <option value="Regina">Regina</option>
+          <option value="Femi">Femi</option>
+          <option value="Adaora">Adaora</option>
+          <option value="Umar">Umar</option>
+          <option value="Mary">Mary</option>
+          <option value="Nonso">Nonso</option>
+          <option value="Remi">Remi</option>
+          <option value="Adam">Adam</option>
+        </select>
+      </div>
+
+      <div class="actions">
+        <button id="detect-language-btn">Detect Language</button>
+        <button id="read-aloud-btn" class="primary">Read Aloud</button>
+        <button id="voice-input-btn">Voice Input</button>
+      </div>
+
+      <div id="status" class="status">Ready.</div>
+      <div id="result" class="result"></div>
+      <div class="hint">
+        Detect language from visible page text, play read-aloud audio, or speak a form response and fill the page automatically.
+      </div>
+    </div>
+  </div>
+
+  <script src="imo_popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "codex": "^0.2.3",
+    "dompurify": "^3.4.8"
+  }
+}

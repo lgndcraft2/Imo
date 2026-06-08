@@ -1,0 +1,1566 @@
+// ================================================================
+// ÌMỌ̀ 2.0 — COMPLETE CONTENT SCRIPT
+// Modes: Section Cards (AI-detected) | Full Page Reformat
+// Features: Floating cards, dock navigation, feedback loop
+// ================================================================
+
+// ── State ────────────────────────────────────────────────────────
+const S = {
+  mode: 'cards',
+  active: false,
+  sections: [],
+  currentSection: 0,
+  originalHTML: null,
+  fullpageActive: false,
+  fullpageMedia: null,
+  panelOpen: false,
+  activeCard: null,
+  activeCardIdx: null,
+  observer: null,
+  analysing: false,
+  sessionDifficulty: 'normal',
+  focusMode: false,
+  bionicReading: false,
+};
+
+const Z = {
+  dock:  2147483641,
+  card:  2147483642,
+  panel: 2147483643,
+  fab:   2147483644,
+};
+
+const C = {
+  green:      '#1D9E75',
+  greenDark:  '#0F6E56',
+  greenLight: '#E1F5EE',
+  greenMid:   '#9FE1CB',
+  greenDeep:  '#085041',
+  gold:       '#F5C842',
+  white:      '#ffffff',
+  g50:        '#fafafa',
+  g100:       '#f4f4f4',
+  g200:       '#e8e8e8',
+  g400:       '#aaaaaa',
+  g600:       '#666666',
+  g900:       '#111111',
+  red:        '#e74c3c',
+};
+
+// ================================================================
+// STYLES
+// ================================================================
+function injectStyles() {
+  if (document.getElementById('imo-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'imo-styles';
+  s.textContent = `
+#imo-fab,#imo-panel,#imo-dock,
+.imo-card,.imo-badge,.imo-section-wrap,
+#imo-fullpage-bar{all:initial;box-sizing:border-box;
+font-family:-apple-system,'Segoe UI',system-ui,sans-serif}
+*,*::before,*::after{box-sizing:inherit}
+
+/* FAB */
+#imo-fab{position:fixed!important;bottom:28px!important;right:28px!important;
+width:52px!important;height:52px!important;border-radius:50%!important;
+background:${C.green}!important;border:none!important;cursor:pointer!important;
+z-index:${Z.fab}!important;display:flex!important;align-items:center!important;
+justify-content:center!important;
+transition:transform .22s cubic-bezier(.16,1,.3,1),background .18s!important;
+box-shadow:0 4px 20px rgba(29,158,117,.35)!important}
+#imo-fab:hover{background:${C.greenDark}!important;transform:scale(1.07)!important}
+#imo-fab.open{transform:rotate(45deg) scale(1.05)!important;background:${C.greenDark}!important}
+#imo-fab svg{width:24px!important;height:24px!important;fill:white!important;display:block!important}
+#imo-fab .s-dot{position:absolute!important;top:5px!important;right:5px!important;
+width:11px!important;height:11px!important;border-radius:50%!important;
+background:${C.gold}!important;border:2px solid white!important;display:none!important}
+#imo-fab.s-active .s-dot{display:block!important}
+#imo-fab.s-analysing{animation:imo-fab-pulse 1.2s ease-in-out infinite!important}
+@keyframes imo-fab-pulse{0%,100%{box-shadow:0 4px 20px rgba(29,158,117,.35)}
+50%{box-shadow:0 4px 32px rgba(29,158,117,.7)}}
+
+/* PANEL */
+#imo-panel{position:fixed!important;bottom:92px!important;right:28px!important;
+width:276px!important;background:${C.white}!important;
+border:1px solid ${C.g200}!important;border-radius:18px!important;
+z-index:${Z.panel}!important;overflow:hidden!important;
+transform:scale(.88) translateY(16px)!important;opacity:0!important;
+pointer-events:none!important;
+transition:transform .24s cubic-bezier(.16,1,.3,1),opacity .18s ease!important;
+box-shadow:0 8px 40px rgba(0,0,0,.12)!important}
+#imo-panel.s-visible{transform:scale(1) translateY(0)!important;
+opacity:1!important;pointer-events:all!important}
+.sp-head{padding:16px 18px 12px!important;border-bottom:1px solid ${C.g100}!important;
+display:flex!important;align-items:center!important;gap:10px!important}
+.sp-logo{font-size:14px!important;font-weight:700!important;color:${C.green}!important;
+letter-spacing:-.02em!important;display:block!important;line-height:1!important}
+.sp-sub{font-size:11px!important;color:${C.g400}!important;display:block!important;
+margin-top:2px!important;line-height:1!important}
+.sp-logo-dot{width:8px!important;height:8px!important;border-radius:50%!important;
+background:${C.green}!important;flex-shrink:0!important;display:block!important;margin-left:auto!important}
+.sp-mode-row{padding:12px 18px!important;border-bottom:1px solid ${C.g100}!important}
+.sp-mode-label{font-size:10px!important;font-weight:600!important;letter-spacing:.08em!important;
+text-transform:uppercase!important;color:${C.g400}!important;display:block!important;margin-bottom:8px!important}
+.sp-mode-toggle{display:flex!important;border:1px solid ${C.g200}!important;
+border-radius:10px!important;overflow:hidden!important}
+.sp-mode-opt{flex:1!important;padding:7px 6px!important;font-size:11px!important;
+font-weight:500!important;text-align:center!important;cursor:pointer!important;
+background:transparent!important;border:none!important;color:${C.g600}!important;
+transition:background .15s,color .15s!important;line-height:1.3!important;font-family:inherit!important}
+.sp-mode-opt.s-on{background:${C.green}!important;color:white!important}
+.sp-actions{padding:12px 18px 16px!important;display:flex!important;
+flex-direction:column!important;gap:7px!important}
+.sp-hint{font-size:11px!important;color:${C.g400}!important;line-height:1.5!important;
+text-align:center!important;padding:0 4px!important;display:block!important}
+.sp-hint.s-error{color:${C.red}!important}
+.sp-btn{width:100%!important;padding:10px 14px!important;border-radius:10px!important;
+font-size:12.5px!important;font-family:inherit!important;font-weight:600!important;
+cursor:pointer!important;border:none!important;
+transition:background .15s,transform .1s!important;text-align:center!important;
+display:block!important;line-height:1!important}
+.sp-btn:active{transform:scale(.97)!important}
+.sp-btn.primary{background:${C.green}!important;color:white!important}
+.sp-btn.primary:hover{background:${C.greenDark}!important}
+.sp-btn.primary:disabled{background:${C.greenMid}!important;cursor:not-allowed!important}
+.sp-btn.ghost{background:${C.g100}!important;color:${C.g600}!important}
+.sp-btn.ghost:hover{background:${C.g200}!important}
+.sp-tool-row{padding:0 18px 12px!important;border-bottom:1px solid ${C.g100}!important;
+display:flex!important;gap:7px!important}
+.sp-tool-btn{flex:1!important;padding:7px 5px!important;border-radius:8px!important;
+border:1.5px solid ${C.g200}!important;background:${C.white}!important;
+font-size:11px!important;font-weight:600!important;color:${C.g600}!important;
+cursor:pointer!important;font-family:inherit!important;line-height:1.2!important}
+.sp-tool-btn:hover{border-color:${C.greenMid}!important;background:${C.greenLight}!important;
+color:${C.greenDeep}!important}
+.sp-tool-btn.s-on{background:${C.green}!important;border-color:${C.green}!important;color:white!important}
+
+/* SECTION WRAPPERS — left-border highlight system */
+.imo-section-wrap{display:block!important;
+border-left:3px solid ${C.g200}!important;
+padding-left:12px!important;
+margin-left:-15px!important;
+transition:border-color .22s,background .22s,box-shadow .22s!important;
+cursor:pointer!important;border-radius:0 6px 6px 0!important}
+.imo-section-wrap:hover{border-left-color:${C.greenMid}!important;
+background:rgba(29,158,117,.04)!important}
+.imo-section-wrap.s-loading{border-left-color:${C.greenMid}!important}
+.imo-section-wrap.s-done{border-left-color:${C.green}!important}
+.imo-section-wrap.s-active{border-left-color:${C.gold}!important;
+background:rgba(245,200,66,.05)!important;
+box-shadow:-3px 0 0 0 ${C.gold}!important}
+
+
+/* FLOATING CARD */
+.imo-card{position:absolute!important;left:50%!important;
+transform:translateX(-50%) translateY(-8px)!important;
+width:min(480px,90vw)!important;background:${C.white}!important;
+border:1px solid ${C.g200}!important;border-radius:18px!important;
+z-index:${Z.card}!important;
+box-shadow:0 16px 60px rgba(0,0,0,.14),0 4px 16px rgba(0,0,0,.07)!important;
+overflow:hidden!important;opacity:0!important;
+transition:opacity .22s ease,transform .28s cubic-bezier(.16,1,.3,1)!important;
+pointer-events:none!important}
+.imo-card.s-visible{opacity:1!important;
+transform:translateX(-50%) translateY(0)!important;pointer-events:all!important}
+.imo-card::after{content:''!important;position:absolute!important;
+bottom:-8px!important;left:50%!important;transform:translateX(-50%)!important;
+width:16px!important;height:8px!important;background:${C.white}!important;
+clip-path:polygon(0 0,100% 0,50% 100%)!important;
+filter:drop-shadow(0 2px 2px rgba(0,0,0,.06))!important;display:block!important}
+.sc-topbar{display:flex!important;align-items:center!important;
+justify-content:space-between!important;padding:13px 16px 11px!important;
+border-bottom:1px solid ${C.g100}!important}
+.sc-title{font-size:12px!important;font-weight:700!important;color:${C.green}!important;
+display:flex!important;align-items:center!important;gap:6px!important;line-height:1!important}
+.sc-title-dot{width:6px!important;height:6px!important;border-radius:50%!important;
+background:${C.green}!important;display:inline-block!important;
+animation:imo-pulse 2s ease-in-out infinite!important}
+@keyframes imo-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.7)}}
+.sc-section-name{font-size:11px!important;color:${C.g400}!important;
+max-width:220px!important;overflow:hidden!important;text-overflow:ellipsis!important;
+white-space:nowrap!important;display:block!important;line-height:1!important;margin-top:2px!important}
+.sc-close{width:26px!important;height:26px!important;border-radius:50%!important;
+border:none!important;background:${C.g100}!important;cursor:pointer!important;
+font-size:14px!important;color:${C.g600}!important;display:flex!important;
+align-items:center!important;justify-content:center!important;
+transition:background .15s!important;flex-shrink:0!important;
+font-family:inherit!important;line-height:1!important}
+.sc-close:hover{background:${C.g200}!important}
+.sc-loading{display:flex!important;align-items:center!important;
+justify-content:center!important;flex-direction:column!important;
+gap:12px!important;padding:36px 24px!important}
+.sc-spinner{width:26px!important;height:26px!important;
+border:3px solid ${C.greenLight}!important;border-top-color:${C.green}!important;
+border-radius:50%!important;animation:imo-spin .65s linear infinite!important;display:block!important}
+@keyframes imo-spin{to{transform:rotate(360deg)}}
+.sc-loading-text{font-size:12px!important;color:${C.g400}!important;line-height:1!important}
+.sc-body{padding:16px 18px 4px!important;max-height:340px!important;
+overflow-y:auto!important;display:none!important;
+scrollbar-width:thin!important;scrollbar-color:${C.greenMid} transparent!important}
+.sc-body.s-ready{display:block!important}
+.sc-body h1,.sc-body h2{font-size:1rem!important;font-weight:700!important;
+color:${C.g900}!important;margin:0 0 10px!important;padding-bottom:6px!important;
+border-bottom:2px solid ${C.green}!important;line-height:1.3!important}
+.sc-body h3{font-size:.9rem!important;font-weight:600!important;color:#333!important;
+margin:12px 0 5px!important;line-height:1.3!important}
+.sc-body p{font-size:.88rem!important;color:#333!important;
+margin-bottom:9px!important;line-height:1.7!important}
+.sc-body ul,.sc-body ol{padding-left:1.2rem!important;margin-bottom:9px!important}
+.sc-body li{font-size:.88rem!important;color:#333!important;
+margin-bottom:5px!important;line-height:1.6!important}
+.sc-body strong{color:${C.g900}!important;font-weight:600!important}
+.sc-body mark{background:${C.greenLight}!important;color:${C.greenDeep}!important;
+padding:1px 5px!important;border-radius:3px!important;font-weight:500!important}
+.sc-body a{color:${C.green}!important}
+
+/* FEEDBACK STRIP */
+.sc-feedback{border-top:1px solid ${C.g100}!important;
+padding:12px 18px 14px!important;display:flex!important;
+flex-direction:column!important;gap:9px!important}
+.sc-feedback-label{font-size:10px!important;font-weight:700!important;
+letter-spacing:.08em!important;text-transform:uppercase!important;
+color:${C.g400}!important;display:block!important;line-height:1!important}
+.sc-feedback-reactions{display:flex!important;gap:6px!important}
+.sc-reaction{flex:1!important;padding:7px 4px!important;border-radius:8px!important;
+border:1.5px solid ${C.g200}!important;background:${C.white}!important;
+font-size:11px!important;font-weight:600!important;cursor:pointer!important;
+color:${C.g600}!important;transition:all .15s!important;text-align:center!important;
+font-family:inherit!important;line-height:1.3!important}
+.sc-reaction:hover{border-color:${C.greenMid}!important;
+background:${C.greenLight}!important;color:${C.greenDeep}!important}
+.sc-reaction.s-selected-good{background:${C.green}!important;
+border-color:${C.green}!important;color:white!important}
+.sc-reaction.s-selected-bad{background:#fff3f3!important;
+border-color:#fca5a5!important;color:${C.red}!important}
+.sc-reaction.s-selected-neutral{background:#fffbeb!important;
+border-color:#fcd34d!important;color:#92400e!important}
+.sc-feedback-input-row{display:flex!important;gap:6px!important;align-items:center!important}
+.sc-feedback-input{flex:1!important;padding:7px 10px!important;
+border-radius:8px!important;border:1.5px solid ${C.g200}!important;
+background:${C.g50}!important;font-size:11.5px!important;
+font-family:inherit!important;color:${C.g900}!important;outline:none!important;
+transition:border-color .15s!important;line-height:1!important}
+.sc-feedback-input:focus{border-color:${C.green}!important;background:white!important}
+.sc-feedback-input::placeholder{color:${C.g400}!important}
+.sc-feedback-send{width:30px!important;height:30px!important;border-radius:50%!important;
+background:${C.green}!important;border:none!important;cursor:pointer!important;
+display:flex!important;align-items:center!important;justify-content:center!important;
+flex-shrink:0!important;transition:background .15s,transform .1s!important;font-family:inherit!important}
+.sc-feedback-send:hover{background:${C.greenDark}!important}
+.sc-feedback-send:active{transform:scale(.93)!important}
+.sc-feedback-send svg{width:13px!important;height:13px!important;
+fill:white!important;display:block!important}
+.sc-feedback-thanks{font-size:11px!important;color:${C.green}!important;
+font-weight:600!important;text-align:center!important;padding:4px 0!important;
+display:none!important;line-height:1!important;animation:imo-fadein .3s ease!important}
+@keyframes imo-fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+/* DOCK */
+#imo-dock{position:fixed!important;bottom:0!important;left:50%!important;
+transform:translateX(-50%) translateY(100%)!important;z-index:${Z.dock}!important;
+background:rgba(255,255,255,.96)!important;
+backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;
+border-top:1px solid ${C.g200}!important;border-left:1px solid ${C.g200}!important;
+border-right:1px solid ${C.g200}!important;border-radius:18px 18px 0 0!important;
+padding:10px 16px 14px!important;display:flex!important;align-items:center!important;
+gap:8px!important;transition:transform .32s cubic-bezier(.16,1,.3,1)!important;
+max-width:calc(100vw - 120px)!important;box-shadow:0 -4px 24px rgba(0,0,0,.08)!important}
+#imo-dock.s-visible{transform:translateX(-50%) translateY(0)!important}
+.dock-label{font-size:10px!important;font-weight:700!important;letter-spacing:.1em!important;
+text-transform:uppercase!important;color:${C.green}!important;
+white-space:nowrap!important;flex-shrink:0!important;line-height:1!important}
+.dock-pills{display:flex!important;gap:5px!important;overflow-x:auto!important;
+scrollbar-width:none!important;flex:1!important;padding:2px 0!important}
+.dock-pills::-webkit-scrollbar{display:none!important}
+.dock-pill{width:30px!important;height:30px!important;border-radius:50%!important;
+background:${C.g100}!important;color:${C.g600}!important;font-size:11px!important;
+font-weight:700!important;border:1.5px solid ${C.g200}!important;cursor:pointer!important;
+display:flex!important;align-items:center!important;justify-content:center!important;
+flex-shrink:0!important;transition:background .15s,border-color .15s,transform .15s!important;
+font-family:inherit!important;line-height:1!important}
+.dock-pill:hover{background:${C.greenLight}!important;border-color:${C.greenMid}!important;
+color:${C.greenDeep}!important;transform:scale(1.1)!important}
+.dock-pill.s-active{background:${C.green}!important;border-color:${C.green}!important;
+color:white!important;transform:scale(1.12)!important}
+.dock-pill.s-done{background:${C.greenLight}!important;
+border-color:${C.greenMid}!important;color:${C.greenDeep}!important}
+.dock-pill.s-loading{background:${C.greenLight}!important;
+border-color:${C.greenMid}!important;color:${C.green}!important;
+animation:imo-dock-pulse 1s ease-in-out infinite!important}
+@keyframes imo-dock-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.dock-arrow,.dock-close{width:30px!important;height:30px!important;
+border-radius:50%!important;background:${C.g100}!important;
+border:1.5px solid ${C.g200}!important;cursor:pointer!important;
+display:flex!important;align-items:center!important;justify-content:center!important;
+flex-shrink:0!important;color:${C.g600}!important;font-size:13px!important;
+transition:background .15s!important;font-family:inherit!important;line-height:1!important}
+.dock-arrow:hover{background:${C.greenLight}!important;
+color:${C.greenDeep}!important;border-color:${C.greenMid}!important}
+.dock-arrow:disabled{opacity:.35!important;cursor:not-allowed!important}
+.dock-close:hover{background:#fee2e2!important;color:${C.red}!important;
+border-color:#fca5a5!important}
+
+/* FULL PAGE BAR */
+#imo-fullpage-bar{position:fixed!important;top:0!important;left:0!important;
+right:0!important;height:42px!important;background:${C.green}!important;
+color:white!important;display:flex!important;align-items:center!important;
+justify-content:center!important;gap:16px!important;font-size:12.5px!important;
+font-weight:600!important;z-index:${Z.panel}!important;
+transform:translateY(-100%)!important;
+transition:transform .28s cubic-bezier(.16,1,.3,1)!important;
+letter-spacing:.01em!important}
+#imo-fullpage-bar.s-visible{transform:translateY(0)!important}
+.sfb-dot{width:7px!important;height:7px!important;border-radius:50%!important;
+background:${C.gold}!important;display:inline-block!important;
+animation:imo-pulse 2s ease-in-out infinite!important}
+.sfb-revert{padding:5px 12px!important;border-radius:20px!important;
+background:rgba(255,255,255,.2)!important;border:1px solid rgba(255,255,255,.4)!important;
+color:white!important;font-size:11.5px!important;font-weight:600!important;
+cursor:pointer!important;transition:background .15s!important;font-family:inherit!important}
+.sfb-revert:hover{background:rgba(255,255,255,.3)!important}
+
+/* FULL PAGE CONTENT */
+.imo-fp{font-family:'Segoe UI',system-ui,sans-serif!important;
+max-width:760px!important;margin:0 auto!important;padding:32px!important;
+line-height:1.8!important;color:${C.g900}!important}
+.imo-fp h1,.imo-fp h2{font-size:1.2rem!important;font-weight:700!important;
+color:${C.g900}!important;margin:2rem 0 .6rem!important;padding-bottom:6px!important;
+border-bottom:2.5px solid ${C.green}!important}
+.imo-fp h2:first-child,.imo-fp h1:first-child{margin-top:0!important}
+.imo-fp h3{font-size:1rem!important;font-weight:600!important;
+color:#333!important;margin:1.4rem 0 .4rem!important}
+.imo-fp p{font-size:1rem!important;color:#333!important;margin-bottom:1rem!important}
+.imo-fp ul,.imo-fp ol{padding-left:1.4rem!important;margin-bottom:1rem!important}
+.imo-fp li{margin-bottom:.5rem!important;font-size:1rem!important;color:#333!important}
+.imo-fp strong{color:${C.g900}!important;font-weight:700!important}
+.imo-fp mark{background:${C.greenLight}!important;color:${C.greenDeep}!important;
+padding:1px 6px!important;border-radius:3px!important;font-weight:500!important}
+.imo-fp a{color:${C.green}!important}
+.imo-fp table{width:100%!important;border-collapse:collapse!important;margin-bottom:1.25rem!important}
+.imo-fp th{background:${C.greenLight}!important;color:${C.greenDeep}!important;
+font-weight:700!important;padding:10px 14px!important;text-align:left!important;
+border-bottom:2px solid ${C.green}!important}
+.imo-fp td{padding:10px 14px!important;border-bottom:1px solid #eee!important;color:#333!important}
+.imo-fp button,.imo-fp input[type="submit"]{padding:10px 20px!important;
+font-size:.95rem!important;font-weight:600!important;color:white!important;
+background:${C.green}!important;border:none!important;border-radius:8px!important;
+cursor:pointer!important;margin-bottom:8px!important;font-family:inherit!important}
+.imo-fp input[type="text"],.imo-fp input[type="email"],
+.imo-fp textarea,.imo-fp select{width:100%!important;
+padding:10px 14px!important;font-size:1rem!important;
+border:1.5px solid #ddd!important;border-radius:8px!important;
+margin-bottom:12px!important;font-family:inherit!important;background:#fafafa!important}
+.imo-fp input:focus,.imo-fp textarea:focus{
+border-color:${C.green}!important;outline:none!important;background:white!important}
+/* DOCUMENT READER */
+.imo-reader{position:fixed!important;inset:0!important;z-index:2147483638!important;
+background:rgba(0,0,0,.55)!important;display:flex!important;justify-content:flex-end!important;
+backdrop-filter:blur(3px)!important;-webkit-backdrop-filter:blur(3px)!important;
+opacity:0!important;pointer-events:none!important;transition:opacity .25s!important}
+.imo-reader.s-visible{opacity:1!important;pointer-events:all!important}
+.imo-reader-panel{width:min(680px,100vw)!important;background:${C.white}!important;
+height:100%!important;overflow-y:auto!important;display:flex!important;flex-direction:column!important;
+box-shadow:-12px 0 48px rgba(0,0,0,.18)!important;
+transform:translateX(40px)!important;transition:transform .28s cubic-bezier(.16,1,.3,1)!important}
+.imo-reader.s-visible .imo-reader-panel{transform:translateX(0)!important}
+.imo-reader-topbar{display:flex!important;align-items:center!important;
+justify-content:space-between!important;padding:18px 24px!important;
+border-bottom:1px solid ${C.g100}!important;position:sticky!important;top:0!important;
+background:${C.white}!important;z-index:1!important}
+.imo-reader-title{font-size:13px!important;font-weight:700!important;
+color:${C.green}!important;display:flex!important;align-items:center!important;gap:7px!important}
+.imo-reader-close{width:28px!important;height:28px!important;border-radius:50%!important;
+border:none!important;background:${C.g100}!important;cursor:pointer!important;
+font-size:15px!important;color:${C.g600}!important;display:flex!important;
+align-items:center!important;justify-content:center!important;transition:background .15s!important;
+font-family:inherit!important;line-height:1!important;flex-shrink:0!important}
+.imo-reader-close:hover{background:${C.g200}!important}
+.imo-reader-loading{display:flex!important;flex-direction:column!important;
+align-items:center!important;justify-content:center!important;
+gap:14px!important;padding:80px 24px!important;flex:1!important}
+.imo-reader-content{padding:32px 36px!important;flex:1!important;
+font-family:'Segoe UI',system-ui,sans-serif!important;line-height:1.8!important;
+color:${C.g900}!important;font-size:1rem!important}
+.imo-reader-content h1,.imo-reader-content h2{font-size:1.15rem!important;
+font-weight:700!important;color:${C.g900}!important;margin:2rem 0 .6rem!important;
+padding-bottom:6px!important;border-bottom:2.5px solid ${C.green}!important}
+.imo-reader-content h2:first-child,.imo-reader-content h1:first-child{margin-top:0!important}
+.imo-reader-content h3{font-size:1rem!important;font-weight:600!important;
+color:#333!important;margin:1.4rem 0 .4rem!important}
+.imo-reader-content p{font-size:1rem!important;color:#333!important;margin-bottom:1rem!important}
+.imo-reader-content ul,.imo-reader-content ol{padding-left:1.4rem!important;margin-bottom:1rem!important}
+.imo-reader-content li{margin-bottom:.5rem!important;font-size:1rem!important;color:#333!important}
+.imo-reader-content strong{color:${C.g900}!important;font-weight:700!important}
+.imo-reader-content mark{background:${C.greenLight}!important;color:${C.greenDeep}!important;
+padding:1px 6px!important;border-radius:3px!important;font-weight:500!important}
+
+/* SQ4R PRE-READING QUESTIONS */
+.sc-sq4r{padding:12px 18px!important;border-bottom:1px solid ${C.g100}!important;
+background:${C.greenLight}!important}
+.sc-sq4r-label{font-size:10px!important;font-weight:700!important;letter-spacing:.08em!important;
+text-transform:uppercase!important;color:${C.greenDeep}!important;display:block!important;
+margin-bottom:8px!important;line-height:1!important}
+.sc-sq4r-list{display:flex!important;flex-direction:column!important;gap:5px!important;
+padding-left:0!important;margin:0!important}
+.sc-sq4r-item{font-size:11.5px!important;color:${C.greenDeep}!important;
+line-height:1.5!important;display:flex!important;gap:7px!important;align-items:flex-start!important}
+.sc-sq4r-item::before{content:'?'!important;font-weight:700!important;
+color:${C.green}!important;flex-shrink:0!important;line-height:1.5!important}
+
+/* BIONIC READING */
+.sc-body.s-bionic b,.sc-body.s-bionic strong{font-weight:800!important}
+.imo-bionic-bold{font-weight:800!important}
+
+/* FOCUS MODE — dims everything except active section */
+body.imo-focus-mode.imo-has-active *:not(.imo-section-wrap):not(.imo-section-wrap *):not(#imo-fab):not(#imo-panel):not(#imo-dock):not(#imo-dock *):not(.imo-card):not(.imo-card *) {
+  opacity:.15!important;transition:opacity .3s!important;pointer-events:none!important;
+}
+body.imo-focus-mode.imo-has-active .imo-section-wrap.s-active,
+body.imo-focus-mode.imo-has-active .imo-section-wrap.s-active *,
+body.imo-focus-mode.imo-has-active #imo-fab,
+body.imo-focus-mode.imo-has-active #imo-panel,
+body.imo-focus-mode.imo-has-active #imo-panel *,
+body.imo-focus-mode.imo-has-active #imo-dock,
+body.imo-focus-mode.imo-has-active #imo-dock *,
+body.imo-focus-mode.imo-has-active .imo-card,
+body.imo-focus-mode.imo-has-active .imo-card * {
+  opacity:1!important;pointer-events:auto!important;
+}
+
+/* MEDIA PRESERVATION — reinjected images stay in flow */
+.imo-media-wrap{display:block!important;margin:16px 0!important;
+max-width:100%!important;line-height:0!important}
+.imo-media-wrap img,.imo-media-wrap video,
+.imo-media-wrap figure,.imo-media-wrap picture{
+max-width:100%!important;height:auto!important;display:block!important;
+border-radius:6px!important}
+.imo-media-wrap iframe{max-width:100%!important;display:block!important}
+
+/* SESSION DIFFICULTY PILL */
+.sp-difficulty-row{padding:10px 18px!important;border-bottom:1px solid ${C.g100}!important}
+.sp-difficulty-label{font-size:10px!important;font-weight:600!important;
+letter-spacing:.08em!important;text-transform:uppercase!important;
+color:${C.g400}!important;display:block!important;margin-bottom:7px!important}
+.sp-difficulty-opts{display:flex!important;gap:5px!important}
+.sp-diff-btn{flex:1!important;padding:6px 4px!important;border-radius:7px!important;
+border:1.5px solid ${C.g200}!important;background:${C.white}!important;
+font-size:11px!important;font-weight:600!important;cursor:pointer!important;
+color:${C.g600}!important;transition:all .15s!important;text-align:center!important;
+font-family:inherit!important;line-height:1.3!important}
+.sp-diff-btn:hover{border-color:${C.greenMid}!important;background:${C.greenLight}!important;color:${C.greenDeep}!important}
+.sp-diff-btn.s-active{background:${C.green}!important;border-color:${C.green}!important;color:white!important}
+  `;
+  document.head.appendChild(s);
+}
+
+// ================================================================
+// DOCUMENT DETECTION
+// ================================================================
+const DOC_TYPES = {
+  'application/pdf':  { label: 'PDF',       icon: '📄' },
+  'text/plain':       { label: 'Text file',  icon: '📝' },
+  'text/csv':         { label: 'CSV',        icon: '📊' },
+  'text/markdown':    { label: 'Markdown',   icon: '📝' },
+};
+
+function detectDocumentType() {
+  const mime = document.contentType || '';
+  const url  = window.location.href.toLowerCase();
+  if (DOC_TYPES[mime]) return { mime, ...DOC_TYPES[mime] };
+  if (/\.pdf(\?|#|$)/.test(url))       return { mime: 'application/pdf', ...DOC_TYPES['application/pdf'] };
+  if (/\.(txt|text)(\?|#|$)/.test(url)) return { mime: 'text/plain',       ...DOC_TYPES['text/plain'] };
+  if (/\.csv(\?|#|$)/.test(url))        return { mime: 'text/csv',          ...DOC_TYPES['text/csv'] };
+  if (/\.md(\?|#|$)/.test(url))         return { mime: 'text/markdown',     ...DOC_TYPES['text/markdown'] };
+  return null;
+}
+
+S.documentType = detectDocumentType(); // set once on load
+
+// ================================================================
+// TEXT EXTRACTION (HTML pages only)
+// ================================================================
+function extractFullPageText() {
+  const main = document.querySelector(
+    'main,article,[role="main"],.content,#content'
+  ) || document.body;
+  const clone = main.cloneNode(true);
+  clone.querySelectorAll(
+    'script,style,nav,footer,header,#imo-fab,#imo-panel,#imo-dock'
+  ).forEach(e => e.remove());
+  return clone.innerText.trim().slice(0, 500000);
+}
+
+// ================================================================
+// SECTION MODE — AI detects sections
+// ================================================================
+function activateSectionMode() {
+  if (S.analysing) return;
+  S.analysing = true;
+
+  const pageText = extractFullPageText();
+  const fab = document.getElementById('imo-fab');
+  fab?.classList.add('s-analysing', 's-active');
+
+  const mainBtn = document.getElementById('sp-main-btn');
+  if (mainBtn) { mainBtn.disabled = true; mainBtn.textContent = 'Reading page...'; }
+  showPanelHint('Ìmọ̀ is identifying sections...');
+
+  chrome.runtime.sendMessage(
+    { type: 'ANALYSE_SECTIONS', pageText },
+    (res) => {
+      S.analysing = false;
+      fab?.classList.remove('s-analysing');
+      if (mainBtn) { mainBtn.disabled = false; mainBtn.textContent = 'Activate on this page'; }
+
+      if (res?.error) {
+        showPanelHint(res.error, true);
+        fab?.classList.remove('s-active');
+        return;
+      }
+      if (!res?.sections?.length) {
+        showPanelHint('Could not identify sections on this page.', true);
+        fab?.classList.remove('s-active');
+        return;
+      }
+
+      renderAISections(res.sections);
+    }
+  );
+}
+
+// ── Dice similarity ───────────────────────────────────────────────
+function diceSim(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const bg = new Map();
+  for (let i = 0; i < a.length - 1; i++) {
+    const k = a.slice(i, i + 2);
+    bg.set(k, (bg.get(k) || 0) + 1);
+  }
+  let hit = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const k = b.slice(i, i + 2);
+    const n = bg.get(k) || 0;
+    if (n > 0) { bg.set(k, n - 1); hit++; }
+  }
+  return (2 * hit) / (a.length + b.length - 2);
+}
+
+// ── Render Claude's identified sections ──────────────────────────
+function renderAISections(aiSections) {
+  const allHeadings = Array.from(
+    document.querySelectorAll('h1,h2,h3,h4')
+  ).filter(h =>
+    !h.closest('#imo-panel') &&
+    !h.closest('#imo-dock') &&
+    !h.id?.startsWith('imo') &&
+    h.offsetParent !== null
+  );
+
+  const allBlocks = Array.from(
+    document.querySelectorAll('p,h2,h3,section,article>div')
+  ).filter(el =>
+    !el.id?.startsWith('imo') && el.offsetParent !== null
+  );
+
+  S.sections = aiSections.map((aiSec, idx) => {
+    // 1. Try heading match
+    let anchor = allHeadings.find(h => {
+      const ht = h.innerText.trim().toLowerCase();
+      const st = aiSec.title.toLowerCase();
+      return ht.includes(st) || st.includes(ht) || diceSim(ht, st) > 0.55;
+    });
+
+    // 2. Try paragraph snippet match
+    if (!anchor) {
+      const snippet = aiSec.content.slice(0, 50).toLowerCase();
+      anchor = Array.from(document.querySelectorAll('p,div'))
+        .find(el =>
+          !el.id?.startsWith('imo') &&
+          el.offsetParent !== null &&
+          el.innerText?.toLowerCase().includes(snippet.slice(0, 25))
+        ) || null;
+    }
+
+    // 3. Distribute evenly
+    if (!anchor) {
+      const step = Math.floor(allBlocks.length / aiSections.length);
+      anchor = allBlocks[idx * step] || document.body;
+    }
+
+    return {
+      idx,
+      heading: anchor,
+      text: aiSec.content,
+      title: aiSec.title,
+      summary: aiSec.summary || '',
+      cachedHTML: null,
+      mediaItems: null,
+      readProgress: 0,
+    };
+  });
+
+  S.sections.forEach((sec, idx) => {
+    let wrap;
+    if (sec.heading.closest('.imo-section-wrap')) {
+      wrap = sec.heading.closest('.imo-section-wrap');
+    } else {
+      wrap = document.createElement('div');
+      wrap.className = 'imo-section-wrap';
+      wrap.dataset.imoIdx = idx;
+      sec.heading.parentNode.insertBefore(wrap, sec.heading);
+      wrap.appendChild(sec.heading);
+    }
+    sec.wrap = wrap;
+    sec.mediaItems = cloneSectionMedia(sec);
+
+    // Hover highlight
+    wrap.addEventListener('mouseenter', () => {
+      if (S.activeCardIdx !== idx) wrap.classList.add('s-highlighted');
+    });
+    wrap.addEventListener('mouseleave', () => wrap.classList.remove('s-highlighted'));
+
+    // Click anywhere on the section to open card
+    wrap.addEventListener('click', (e) => {
+      if (e.target.closest('.imo-card')) return; // don't re-open if clicking card
+      openCard(idx);
+    });
+  });
+
+
+  buildDock();
+  S.active = true;
+  document.getElementById('imo-fab')?.classList.add('s-active');
+  showPanelHint(`${S.sections.length} sections identified.`);
+  updatePanelState();
+  setupScrollObserver();
+}
+
+// ================================================================
+// BIONIC READING
+// Wraps the first ~45% of each word in a <b> tag.
+// Applied to the card body innerHTML when S.bionicReading is true.
+// ================================================================
+function applyBionicReading(html) {
+  // Parse into a temporary element and walk text nodes only
+  const tmp = document.createElement('div');
+  // Sanitize input before parsing
+  tmp.innerHTML = DOMPurify.sanitize(html);
+  
+  const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) textNodes.push(node);
+
+  textNodes.forEach(tn => {
+    const text = tn.textContent;
+    const regex = /\b([a-zA-Z]{2,})\b/g;
+    let match;
+    let lastIndex = 0;
+    const fragment = document.createDocumentFragment();
+
+    while ((match = regex.exec(text)) !== null) {
+      // Append text before the match
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      }
+
+      const word = match[0];
+      const boldLen = Math.ceil(word.length * 0.45);
+      const boldPart = word.slice(0, boldLen);
+      const restPart = word.slice(boldLen);
+
+      const b = document.createElement('b');
+      b.className = 'imo-bionic-bold';
+      b.textContent = boldPart;
+      fragment.appendChild(b);
+
+      if (restPart) {
+        fragment.appendChild(document.createTextNode(restPart));
+      }
+
+      lastIndex = regex.lastIndex;
+    }
+
+    // Append remaining text
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    tn.parentNode.replaceChild(fragment, tn);
+  });
+
+  return tmp.innerHTML;
+}
+
+// ================================================================
+// SQ4R — inject pre-reading questions above card body
+// ================================================================
+function injectSQ4RQuestions(card, questions) {
+  if (!questions || questions.length === 0) return;
+  const existing = card.querySelector('.sc-sq4r');
+  if (existing) existing.remove();
+
+  const block = document.createElement('div');
+  block.className = 'sc-sq4r';
+  // Sanitize the entire list block
+  block.innerHTML = DOMPurify.sanitize(`
+    <span class="sc-sq4r-label">Read to answer</span>
+    <ul class="sc-sq4r-list">
+      ${questions.map(q => `<li class="sc-sq4r-item">${q}</li>`).join('')}
+    </ul>`);
+
+  const body = card.querySelector('.sc-body');
+  if (body) card.insertBefore(block, body);
+}
+
+// ================================================================
+// FOCUS MODE
+// ================================================================
+function toggleFocusMode(on) {
+  S.focusMode = on;
+  document.body.classList.toggle('imo-focus-mode', on);
+}
+
+// ================================================================
+// FLOATING CARD
+// ================================================================
+function openCard(idx) {
+  closeCard();
+  const sec = S.sections[idx];
+  if (!sec) return;
+
+  S.activeCardIdx = idx;
+  S.sections.forEach(s => s.wrap?.classList.remove('s-active'));
+  sec.wrap?.classList.add('s-active', 's-loading');
+  document.body.classList.add('imo-has-active');
+  updateDockActive(idx);
+
+  const card = document.createElement('div');
+  card.className = 'imo-card';
+  card.innerHTML = DOMPurify.sanitize(`
+    <div class="sc-topbar">
+      <div>
+        <div class="sc-title">
+          <span class="sc-title-dot"></span>Ìmọ̀
+        </div>
+        <span class="sc-section-name">${sec.title}</span>
+      </div>
+      <button class="sc-close">✕</button>
+    </div>
+    <div class="sc-loading">
+      <div class="sc-spinner"></div>
+      <span class="sc-loading-text">Rebuilding for your brain...</span>
+    </div>
+    <div class="sc-body"></div>`);
+
+  sec.wrap.style.position = 'relative';
+  sec.wrap.insertBefore(card, sec.wrap.firstChild);
+  S.activeCard = card;
+
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => card.classList.add('s-visible'))
+  );
+
+  card.querySelector('.sc-close').addEventListener('click', closeCard);
+
+  // Use cache
+  if (sec.cachedHTML) {
+    sec.wrap?.classList.remove('s-loading');
+    const html = S.bionicReading ? applyBionicReading(sec.cachedHTML) : sec.cachedHTML;
+    showCardContent(card, sec, html);
+    // Still fetch SQ4R questions if not cached
+    if (!sec.cachedQuestions) {
+      chrome.runtime.sendMessage({ type: 'GET_SQ4R_QUESTIONS', pageText: sec.text }, (res) => {
+        sec.cachedQuestions = res?.questions || [];
+        injectSQ4RQuestions(card, sec.cachedQuestions);
+      });
+    } else {
+      injectSQ4RQuestions(card, sec.cachedQuestions);
+    }
+    return;
+  }
+
+  // Fetch SQ4R questions and reformat in parallel
+  chrome.runtime.sendMessage({ type: 'GET_SQ4R_QUESTIONS', pageText: sec.text }, (res) => {
+    sec.cachedQuestions = res?.questions || [];
+    injectSQ4RQuestions(card, sec.cachedQuestions);
+  });
+
+  chrome.runtime.sendMessage(
+    {
+      type: 'CALL_LLM',
+      pageText: sec.text,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      sessionDifficulty: S.sessionDifficulty,
+      mode: 'cards'
+    },
+    (res) => {
+      sec.wrap?.classList.remove('s-loading');
+      if (res?.html) {
+        sec.cachedHTML = res.html;
+        sec.cachedQuestions = res.questions || sec.cachedQuestions || [];
+        sec.wrap?.classList.add('s-done');
+        const html = S.bionicReading ? applyBionicReading(res.html) : res.html;
+        showCardContent(card, sec, html);
+        if (sec.cachedQuestions?.length) injectSQ4RQuestions(card, sec.cachedQuestions);
+        updateDockPill(idx, 's-done');
+      } else {
+        card.querySelector('.sc-loading').style.display = 'none';
+        const body = card.querySelector('.sc-body');
+        body.classList.add('s-ready');
+
+        if (res?.error?.code === 'LENGTH_EXCEEDED') {
+          body.innerHTML = `
+            <div style="padding:15px;text-align:center">
+              <p style="color:${C.red};font-weight:600;margin-bottom:10px">${res.error.message}</p>
+              <p style="font-size:12px;color:${C.g600};margin-bottom:15px">This section exceeds your current plan's character limit.</p>
+              <button class="sp-btn primary" id="btn-upgrade-${idx}" style="width:100%;margin-bottom:8px">Upgrade for 10x capacity</button>
+              <button class="sp-btn ghost" id="btn-truncate-${idx}" style="width:100%">Truncate to ${res.error.limit} chars</button>
+            </div>`;
+          
+          body.querySelector(`#btn-upgrade-${idx}`).onclick = () => window.open(chrome.runtime.getURL('popup.html?action=upgrade'), '_blank');
+          body.querySelector(`#btn-truncate-${idx}`).onclick = () => {
+            sec.text = sec.text.substring(0, res.error.limit);
+            openCard(idx); // Retry with truncated text
+          };
+        } else {
+          body.innerHTML = `<p style="color:${C.red};font-size:13px">
+            ${res?.error || 'Something went wrong. Check your API key.'}</p>`;
+        }
+        updateDockPill(idx, '');
+      }
+    }
+  );
+
+  setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+}
+
+function showCardContent(card, sec, html) {
+  card.querySelector('.sc-loading').style.setProperty('display', 'none', 'important');
+  const body = card.querySelector('.sc-body');
+  body.classList.add('s-ready');
+  // Sanitize AI-generated HTML before injection
+  body.innerHTML = DOMPurify.sanitize(html);
+  if (sec.mediaItems?.length) {
+    reinjectMedia(body, sec.mediaItems.map(item => ({
+      el: item.el.cloneNode(true),
+      position: item.position
+    })));
+  }
+
+  body.addEventListener('scroll', () => {
+    const p = body.scrollTop / (body.scrollHeight - body.clientHeight);
+    sec.readProgress = Math.max(sec.readProgress, Math.min(1, p || 0));
+    updateProgressRing(sec);
+  });
+
+  injectFeedbackStrip(card, sec);
+}
+
+function closeCard() {
+  if (!S.activeCard) return;
+  S.activeCard.classList.remove('s-visible');
+  const card = S.activeCard;
+  setTimeout(() => card.remove(), 280);
+  S.activeCard = null;
+  if (S.activeCardIdx !== null) {
+    S.sections[S.activeCardIdx]?.wrap?.classList.remove('s-active');
+    updateDockActive(null);
+  }
+  document.body.classList.remove('imo-has-active');
+  S.activeCardIdx = null;
+}
+
+function updateProgressRing(sec) {
+  const circle = sec.badge?.querySelector('.s-ring circle');
+  if (!circle) return;
+  circle.style.strokeDashoffset = 75.4 - sec.readProgress * 75.4;
+}
+
+// ================================================================
+// FEEDBACK STRIP
+// ================================================================
+function injectFeedbackStrip(card, sec) {
+  card.querySelector('.sc-feedback')?.remove();
+  const strip = document.createElement('div');
+  strip.className = 'sc-feedback';
+  strip.innerHTML = `
+    <span class="sc-feedback-label">Did this help?</span>
+    <div class="sc-feedback-reactions">
+      <button class="sc-reaction" data-val="clearer">✓ Clearer</button>
+      <button class="sc-reaction" data-val="complex">↑ Too complex</button>
+      <button class="sc-reaction" data-val="simple">↓ Too simple</button>
+      <button class="sc-reaction" data-val="off-topic">✗ Missed the point</button>
+    </div>
+    <div class="sc-feedback-input-row">
+      <input class="sc-feedback-input" type="text"
+        placeholder="Anything specific? (optional)" maxlength="200"/>
+      <button class="sc-feedback-send" title="Send">
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </div>
+    <div class="sc-feedback-thanks">Got it — Ìmọ̀ is learning your preferences.</div>`;
+  card.appendChild(strip);
+
+  let selected = null;
+  const openTime = Date.now();
+
+  strip.querySelectorAll('.sc-reaction').forEach(btn => {
+    btn.addEventListener('click', () => {
+      strip.querySelectorAll('.sc-reaction').forEach(b =>
+        b.classList.remove('s-selected-good','s-selected-bad','s-selected-neutral')
+      );
+      selected = btn.dataset.val;
+      if (selected === 'clearer') btn.classList.add('s-selected-good');
+      else if (selected === 'complex') btn.classList.add('s-selected-bad');
+      else btn.classList.add('s-selected-neutral');
+      submitFeedback(sec, selected, '', openTime, strip);
+    });
+  });
+
+  strip.querySelector('.sc-feedback-send').addEventListener('click', () => {
+    const note = strip.querySelector('.sc-feedback-input').value.trim();
+    if (note) submitFeedback(sec, selected, note, openTime, strip);
+  });
+
+  strip.querySelector('.sc-feedback-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const note = e.target.value.trim();
+      if (note) submitFeedback(sec, selected, note, openTime, strip);
+    }
+  });
+}
+
+function submitFeedback(sec, reaction, note, openTime, strip) {
+  const entry = {
+    ts: Date.now(),
+    sectionTitle: sec.title,
+    reaction,
+    note: note || '',
+    timeSpentSeconds: Math.round((Date.now() - openTime) / 1000),
+    readProgress: Math.round(sec.readProgress * 100),
+    sessionDifficulty: S.sessionDifficulty,
+  };
+
+  chrome.runtime.sendMessage({ type: 'FEEDBACK', entry });
+
+  // Show thanks in strip
+  strip.querySelector('.sc-feedback-reactions').style.display = 'none';
+  strip.querySelector('.sc-feedback-input-row').style.display = 'none';
+  strip.querySelector('.sc-feedback-label').style.display = 'none';
+  strip.querySelector('.sc-feedback-thanks').style.display = 'block';
+}
+
+// ================================================================
+// DOCK
+// ================================================================
+function buildDock() {
+  document.getElementById('imo-dock')?.remove();
+  const dock = document.createElement('div');
+  dock.id = 'imo-dock';
+  dock.innerHTML = `
+    <span class="dock-label">Sections</span>
+    <button class="dock-arrow" id="dock-prev">&#8592;</button>
+    <div class="dock-pills" id="dock-pills"></div>
+    <button class="dock-arrow" id="dock-next">&#8594;</button>
+    <button class="dock-close" id="dock-close-btn">&#10005;</button>`;
+  document.body.appendChild(dock);
+
+  const pillsEl = dock.querySelector('#dock-pills');
+  S.sections.forEach((sec, idx) => {
+    const pill = document.createElement('button');
+    pill.className = 'dock-pill';
+    pill.dataset.idx = idx;
+    pill.textContent = idx + 1;
+    pill.title = sec.title;
+    pill.addEventListener('click', () => {
+      sec.wrap?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      openCard(idx);
+    });
+    pillsEl.appendChild(pill);
+    sec.pill = pill;
+  });
+
+  dock.querySelector('#dock-prev').addEventListener('click', () => {
+    const prev = (S.activeCardIdx ?? 1) - 1;
+    if (prev >= 0) {
+      S.sections[prev]?.wrap?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      openCard(prev);
+    }
+  });
+
+  dock.querySelector('#dock-next').addEventListener('click', () => {
+    const next = (S.activeCardIdx ?? -1) + 1;
+    if (next < S.sections.length) {
+      S.sections[next]?.wrap?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      openCard(next);
+    }
+  });
+
+  dock.querySelector('#dock-close-btn').addEventListener('click', deactivateSectionMode);
+
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => dock.classList.add('s-visible'))
+  );
+}
+
+function updateDockActive(idx) {
+  document.querySelectorAll('.dock-pill').forEach((p, i) =>
+    p.classList.toggle('s-active', i === idx)
+  );
+}
+
+function updateDockPill(idx, cls) {
+  const pill = document.querySelector(`.dock-pill[data-idx="${idx}"]`);
+  if (!pill) return;
+  pill.classList.remove('s-loading','s-done','s-active');
+  if (cls) pill.classList.add(cls);
+}
+
+// ================================================================
+// SCROLL OBSERVER
+// ================================================================
+function setupScrollObserver() {
+  S.observer?.disconnect();
+  S.observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting && S.activeCardIdx === null) {
+        const idx = parseInt(e.target.dataset.imoIdx);
+        if (!isNaN(idx)) { updateDockActive(idx); S.currentSection = idx; }
+      }
+    });
+  }, { threshold: 0.3 });
+  S.sections.forEach(sec => sec.wrap && S.observer.observe(sec.wrap));
+}
+
+
+// ================================================================
+// DEACTIVATE SECTION MODE
+// ================================================================
+function deactivateSectionMode() {
+  closeCard();
+  S.sections.forEach(sec => {
+    if (!sec.wrap?.parentNode) return;
+    const parent = sec.wrap.parentNode;
+    while (sec.wrap.firstChild) {
+      const child = sec.wrap.firstChild;
+      if (child.classList?.contains('imo-card')) {
+        child.remove();
+      } else {
+        parent.insertBefore(child, sec.wrap);
+      }
+    }
+    sec.wrap.remove();
+  });
+  S.sections = [];
+  S.active = false;
+  S.activeCardIdx = null;
+  document.body.classList.remove('imo-has-active');
+
+  const dock = document.getElementById('imo-dock');
+  if (dock) { dock.classList.remove('s-visible'); setTimeout(() => dock.remove(), 320); }
+  S.observer?.disconnect();
+  S.observer = null;
+  document.getElementById('imo-fab')?.classList.remove('s-active');
+  updatePanelState();
+}
+
+// ================================================================
+// IMAGE PRESERVATION UTILITIES
+// Extract media elements before sending text to Claude, then
+// stitch them back into Claude's output at the closest logical
+// position — so images never disappear during reformat.
+// ================================================================
+
+const MEDIA_SELECTOR = 'img, figure, picture, video, iframe[src*="youtube"], iframe[src*="vimeo"]';
+
+function cloneSectionMedia(sec) {
+  const candidates = [];
+  let cursor = sec.heading;
+  let steps = 0;
+
+  while (cursor && steps < 18) {
+    if (cursor.matches?.(MEDIA_SELECTOR)) candidates.push(cursor);
+    cursor.querySelectorAll?.(MEDIA_SELECTOR).forEach(el => candidates.push(el));
+    cursor = cursor.nextElementSibling;
+    if (cursor?.matches?.('h1,h2,h3,h4') && steps > 0) break;
+    steps++;
+  }
+
+  const total = Math.max(candidates.length - 1, 1);
+  return candidates.slice(0, 8).map((el, idx) => ({
+    el: el.cloneNode(true),
+    position: idx / total
+  }));
+}
+
+/**
+ * snapshotMedia(root)
+ * Walks root's DOM, lifts every media element out, and records
+ * where it sat as a fractional position (0–1) through the text
+ * content of root. Returns { placeholders, mediaItems }.
+ * placeholders are invisible <span> sentinels left in the DOM so
+ * revertMedia can put things back exactly.
+ */
+function snapshotMedia(root) {
+  const mediaItems = [];
+  const allText = root.innerText || root.textContent || '';
+  const totalLen = allText.length || 1;
+
+  root.querySelectorAll(MEDIA_SELECTOR).forEach((el, i) => {
+    // figure out how far through the document this element sits
+    const range = document.createRange();
+    range.setStartBefore(root);
+    range.setEndBefore(el);
+    const precedingText = range.toString();
+    const position = precedingText.length / totalLen; // 0.0 → 1.0
+
+    // leave a placeholder so we can revert cleanly
+    const placeholder = document.createElement('span');
+    placeholder.dataset.imoMediaIdx = i;
+    placeholder.style.display = 'none';
+    el.parentNode.insertBefore(placeholder, el);
+
+    // lift the element
+    el.remove();
+
+    mediaItems.push({ el, position, placeholder });
+  });
+
+  return mediaItems;
+}
+
+/**
+ * reinjectedMedia(outputEl, mediaItems)
+ * Given Claude's reformatted output as a DOM element and the
+ * array from snapshotMedia, inserts each media element at the
+ * paragraph whose fractional position is closest to where the
+ * media was in the original.
+ */
+function reinjectMedia(outputEl, mediaItems) {
+  if (!mediaItems || mediaItems.length === 0) return;
+
+  // collect all block-level insertion points in the output
+  const blocks = Array.from(
+    outputEl.querySelectorAll('p, h1, h2, h3, h4, li, blockquote, div:not(:has(*))')
+  );
+  if (blocks.length === 0) blocks.push(outputEl);
+
+  const totalBlocks = blocks.length;
+
+  mediaItems.forEach(({ el, position }) => {
+    // find the block whose index-ratio is closest to the original position
+    let best = blocks[0];
+    let bestDiff = Infinity;
+    blocks.forEach((block, i) => {
+      const blockPos = i / (totalBlocks - 1 || 1);
+      const diff = Math.abs(blockPos - position);
+      if (diff < bestDiff) { bestDiff = diff; best = block; }
+    });
+
+    // wrap it so it stays visually inline with surrounding content
+    const wrapper = document.createElement('div');
+    wrapper.className = 'imo-media-wrap';
+    wrapper.appendChild(el);
+    best.parentNode.insertBefore(wrapper, best.nextSibling);
+  });
+}
+
+/**
+ * revertMedia(mediaItems)
+ * Puts each media element back next to its placeholder and
+ * removes the placeholder. Used when reverting a full-page
+ * reformat back to the original HTML.
+ * (Note: for full-page revert we restore originalHTML entirely,
+ * so this is only needed if we ever do in-place revert without
+ * innerHTML swap.)
+ */
+function revertMedia(mediaItems) {
+  if (!mediaItems) return;
+  mediaItems.forEach(({ el, placeholder }) => {
+    if (placeholder.parentNode) {
+      placeholder.parentNode.insertBefore(el, placeholder);
+      placeholder.remove();
+    }
+  });
+}
+
+// ================================================================
+// FULL PAGE MODE
+// ================================================================
+function activateFullPage() {
+  const main = document.querySelector(
+    'main,article,[role="main"],.content,#content'
+  ) || document.body;
+
+  // Save original HTML for revert before touching anything
+  if (!S.originalHTML) S.originalHTML = main.innerHTML;
+
+  // ── Lift all media out, record their positions ──────────────────
+  const mediaItems = snapshotMedia(main);
+  S.fullpageMedia = mediaItems; // stash so revertFullPage can restore
+
+  // ── Extract text-only content for Claude ────────────────────────
+  const clone = main.cloneNode(true);
+  clone.querySelectorAll('script,style,nav,footer,header').forEach(e => e.remove());
+  const text = extractFullPageText();
+
+  const btn = document.getElementById('sp-main-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reformatting...'; }
+
+  chrome.runtime.sendMessage({
+    type: 'CALL_LLM',
+    pageText: text,
+    pageUrl: window.location.href,
+    pageTitle: document.title,
+    sessionDifficulty: S.sessionDifficulty,
+    mode: 'fullpage'
+  }, (res) => {
+    if (btn) { btn.disabled = false; btn.textContent = 'Reformat full page'; }
+    if (res?.html) {
+      // ── Build the output container ───────────────────────────────
+      const fp = document.createElement('div');
+      fp.className = 'imo-fp';
+      // Sanitize AI-generated HTML before injection
+      fp.innerHTML = DOMPurify.sanitize(res.html);
+
+      // ── Stitch images back in at their original positions ────────
+      reinjectMedia(fp, mediaItems);
+
+      // ── Swap the page content ────────────────────────────────────
+      main.innerHTML = '';
+      main.appendChild(fp);
+
+      S.fullpageActive = true;
+      showFullPageBar();
+      document.getElementById('imo-fab')?.classList.add('s-active');
+      updatePanelState();
+    } else {
+      // Reformat failed — put images back before showing the error
+      revertMedia(mediaItems);
+      showPanelHint(res?.error || 'Something went wrong.', true);
+    }
+  });
+}
+
+function revertFullPage() {
+  const main = document.querySelector(
+    'main,article,[role="main"],.content,#content'
+  ) || document.body;
+  if (S.originalHTML) { main.innerHTML = S.originalHTML; S.originalHTML = null; }
+  S.fullpageActive = false;
+  S.fullpageMedia = null;
+  hideFullPageBar();
+  document.getElementById('imo-fab')?.classList.remove('s-active');
+  updatePanelState();
+}
+
+function showFullPageBar() {
+  let bar = document.getElementById('imo-fullpage-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'imo-fullpage-bar';
+    bar.innerHTML = `
+      <span class="sfb-dot"></span>
+      <span>Ìmọ̀ — Page reformatted for your brain</span>
+      <button class="sfb-revert" id="sfb-revert-btn">Revert to original</button>`;
+    document.body.appendChild(bar);
+    bar.querySelector('#sfb-revert-btn').addEventListener('click', revertFullPage);
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => bar.classList.add('s-visible')));
+}
+
+function hideFullPageBar() {
+  const bar = document.getElementById('imo-fullpage-bar');
+  if (bar) { bar.classList.remove('s-visible'); setTimeout(() => bar.remove(), 300); }
+}
+
+// ================================================================
+// DOCUMENT READER MODE
+// ================================================================
+function activateDocumentMode() {
+  if (S.analysing) return;
+  S.analysing = true;
+
+  const btn = document.getElementById('sp-main-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reading document...'; }
+  showPanelHint('Ìmọ̀ is extracting and reformatting the document...');
+  
+  const fab = document.getElementById('imo-fab');
+  fab?.classList.add('s-analysing', 's-active');
+
+  let reader = document.getElementById('imo-reader-overlay');
+  if (!reader) {
+    reader = document.createElement('div');
+    reader.id = 'imo-reader-overlay';
+    reader.className = 'imo-reader';
+    reader.innerHTML = `
+      <div class="imo-reader-panel">
+        <div class="imo-reader-topbar">
+          <div class="imo-reader-title">
+            <span class="sc-title-dot"></span>Ìmọ̀ Document Reader
+          </div>
+          <button class="imo-reader-close">✕</button>
+        </div>
+        <div class="imo-reader-loading">
+          <div class="sc-spinner"></div>
+          <span class="sc-loading-text">Rebuilding document for your brain...</span>
+        </div>
+        <div class="imo-reader-content" style="display:none"></div>
+      </div>
+    `;
+    document.body.appendChild(reader);
+    reader.querySelector('.imo-reader-close').addEventListener('click', closeDocumentReader);
+  }
+
+  requestAnimationFrame(() => requestAnimationFrame(() => reader.classList.add('s-visible')));
+
+  chrome.runtime.sendMessage(
+    { 
+      type: 'ANALYSE_DOCUMENT', 
+      url: window.location.href, 
+      mediaType: S.documentType.mime 
+    },
+    (res) => {
+      S.analysing = false;
+      if (btn) { btn.disabled = false; btn.textContent = `Read ${S.documentType.label}`; }
+      fab?.classList.remove('s-analysing');
+
+      const loading = reader.querySelector('.imo-reader-loading');
+      const content = reader.querySelector('.imo-reader-content');
+
+      loading.style.setProperty('display', 'none', 'important');
+      content.style.setProperty('display', 'block', 'important');
+
+      if (res?.html) {
+        // Sanitize AI-generated HTML before injection
+        content.innerHTML = DOMPurify.sanitize(res.html);
+        showPanelHint('Document reformatted. Close the reader to return to the original.');
+      } else {
+        // Sanitize error message just in case it contains malicious content
+        content.innerHTML = DOMPurify.sanitize(`<p style="color:${C.red}">${res?.error || 'Failed to read document.'}</p>`);
+        showPanelHint(res?.error || 'Document reading failed.', true);
+      }
+    }
+  );
+}
+
+function closeDocumentReader() {
+  const reader = document.getElementById('imo-reader-overlay');
+  if (reader) {
+    reader.classList.remove('s-visible');
+    setTimeout(() => reader.remove(), 300);
+  }
+  document.getElementById('imo-fab')?.classList.remove('s-active');
+  updatePanelState();
+}
+
+// ================================================================
+// FAB + PANEL
+// ================================================================
+function buildFloatingUI() {
+  if (document.getElementById('imo-fab')) return;
+  injectStyles();
+
+  const fab = document.createElement('button');
+  fab.id = 'imo-fab';
+  fab.title = 'Ìmọ̀';
+  fab.innerHTML = `
+    <svg viewBox="0 0 24 24">
+      <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14
+        2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0
+        1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/>
+    </svg>
+    <span class="s-dot"></span>`;
+
+  const panel = document.createElement('div');
+  panel.id = 'imo-panel';
+  panel.innerHTML = `
+    <div class="sp-head">
+      <div>
+        <span class="sp-logo">Ìmọ̀</span>
+        <span class="sp-sub">Cognitive layer</span>
+      </div>
+      <span class="sp-logo-dot"></span>
+    </div>
+    <div class="sp-mode-row">
+      <span class="sp-mode-label">Mode</span>
+      <div class="sp-mode-toggle">
+        <button class="sp-mode-opt s-on" data-mode="cards">Section Cards</button>
+        <button class="sp-mode-opt" data-mode="fullpage">Full Page</button>
+      </div>
+    </div>
+    <div class="sp-actions">
+      <span class="sp-hint" id="sp-hint">
+        Ìmọ̀ reads the page and adds cards to each section.
+      </span>
+      <button class="sp-btn primary" id="sp-main-btn">Activate on this page</button>
+      <button class="sp-btn ghost" id="sp-deactivate-btn" style="display:none">
+        Deactivate
+      </button>
+    </div>
+    <div class="sp-tool-row">
+      <button class="sp-tool-btn" id="sp-focus-btn" type="button">Focus</button>
+      <button class="sp-tool-btn" id="sp-bionic-btn" type="button">Bionic</button>
+    </div>
+    <div class="sp-difficulty-row" id="sp-difficulty-row" style="display:none">
+      <span class="sp-difficulty-label">Today's reading feel</span>
+      <div class="sp-difficulty-opts">
+        <button class="sp-diff-btn" data-diff="hard">Hard day</button>
+        <button class="sp-diff-btn s-active" data-diff="normal">Normal</button>
+        <button class="sp-diff-btn" data-diff="easy">Flowing</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(fab);
+  document.body.appendChild(panel);
+
+  fab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    S.panelOpen = !S.panelOpen;
+    panel.classList.toggle('s-visible', S.panelOpen);
+    fab.classList.toggle('open', S.panelOpen);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!fab.contains(e.target) && !panel.contains(e.target)) {
+      S.panelOpen = false;
+      panel.classList.remove('s-visible');
+      fab.classList.remove('open');
+    }
+  });
+
+  panel.querySelectorAll('.sp-mode-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      panel.querySelectorAll('.sp-mode-opt').forEach(b => b.classList.remove('s-on'));
+      btn.classList.add('s-on');
+      S.mode = btn.dataset.mode;
+      updatePanelState();
+    });
+  });
+
+  document.getElementById('sp-main-btn').addEventListener('click', () => {
+    S.panelOpen = false;
+    panel.classList.remove('s-visible');
+    fab.classList.remove('open');
+    if (S.documentType) return activateDocumentMode();
+    S.mode === 'cards' ? activateSectionMode() : activateFullPage();
+  });
+
+  document.getElementById('sp-deactivate-btn').addEventListener('click', () => {
+    S.panelOpen = false;
+    panel.classList.remove('s-visible');
+    fab.classList.remove('open');
+    S.mode === 'cards' ? deactivateSectionMode() : revertFullPage();
+  });
+
+  // Difficulty buttons
+  panel.querySelectorAll('.sp-diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      panel.querySelectorAll('.sp-diff-btn').forEach(b => b.classList.remove('s-active'));
+      btn.classList.add('s-active');
+      S.sessionDifficulty = btn.dataset.diff;
+    });
+  });
+
+  document.getElementById('sp-focus-btn')?.addEventListener('click', (e) => {
+    const on = !S.focusMode;
+    toggleFocusMode(on);
+    e.currentTarget.classList.toggle('s-on', on);
+  });
+
+  document.getElementById('sp-bionic-btn')?.addEventListener('click', (e) => {
+    S.bionicReading = !S.bionicReading;
+    e.currentTarget.classList.toggle('s-on', S.bionicReading);
+    if (S.activeCard && S.activeCardIdx !== null) {
+      const sec = S.sections[S.activeCardIdx];
+      if (sec?.cachedHTML) {
+        const html = S.bionicReading ? applyBionicReading(sec.cachedHTML) : sec.cachedHTML;
+        showCardContent(S.activeCard, sec, html);
+      }
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeCard();
+  });
+
+  updatePanelState();
+}
+
+// ================================================================
+// PANEL HELPERS
+// ================================================================
+function updatePanelState() {
+  const hint    = document.getElementById('sp-hint');
+  const mainBtn = document.getElementById('sp-main-btn');
+  const deacBtn = document.getElementById('sp-deactivate-btn');
+  if (!hint || !mainBtn || !deacBtn) return;
+
+  // Document mode overrides everything
+  if (S.documentType) {
+    const { label, icon } = S.documentType;
+    hint.textContent = `${icon} ${label} detected. Ìmọ̀ will fetch and reformat it for your brain.`;
+    mainBtn.style.display = 'block';
+    mainBtn.textContent   = `Read ${label}`;
+    deacBtn.style.display = 'none';
+    // hide mode toggle since it's irrelevant for documents
+    const modeRow = document.querySelector('.sp-mode-row');
+    if (modeRow) modeRow.style.display = 'none';
+    return;
+  }
+
+  hint.className = 'sp-hint';
+
+  if (S.mode === 'cards') {
+    if (S.active) {
+      hint.textContent = `${S.sections.length} sections active. Click any highlighted section to open a card.`;
+      mainBtn.style.display = 'none';
+      deacBtn.style.display = 'block';
+      deacBtn.textContent = 'Remove section cards';
+      const diffRow = document.getElementById('sp-difficulty-row');
+      if (diffRow) diffRow.style.display = 'block';
+    } else {
+      hint.textContent = 'Ìmọ̀ reads the page and adds cards to each section.';
+      mainBtn.style.display = 'block';
+      mainBtn.textContent = 'Activate on this page';
+      deacBtn.style.display = 'none';
+      const diffRow = document.getElementById('sp-difficulty-row');
+      if (diffRow) diffRow.style.display = 'none';
+    }
+  } else {
+    if (S.fullpageActive) {
+      hint.textContent = 'Full page restructured for your cognitive profile.';
+      mainBtn.style.display = 'none';
+      deacBtn.style.display = 'block';
+      deacBtn.textContent = 'Revert to original';
+    } else {
+      hint.textContent = 'Rebuilds the entire page around your cognitive profile.';
+      mainBtn.style.display = 'block';
+      mainBtn.textContent = 'Reformat full page';
+      deacBtn.style.display = 'none';
+    }
+  }
+}
+
+function showPanelHint(msg, isError = false) {
+  const hint = document.getElementById('sp-hint');
+  if (!hint) return;
+  hint.textContent = typeof msg === 'object' ? msg.message : msg;
+  hint.className = isError ? 'sp-hint s-error' : 'sp-hint';
+}
+
+// ================================================================
+// MESSAGE LISTENER
+// ================================================================
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'PING') sendResponse({ alive: true });
+});
+
+// ================================================================
+// INIT
+// ================================================================
+buildFloatingUI();
