@@ -81,6 +81,7 @@ class ReformatResponse(BaseModel):
     html: str
     questions: Optional[list[str]] = None   # SQ4R questions
     model_used: str                          # "gemini-flash" or "claude-sonnet"
+    model_config = {'protected_namespaces': ()}
 
 
 # ── Section Analysis ────────────────────────────────────────────

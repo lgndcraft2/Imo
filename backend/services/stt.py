@@ -10,12 +10,12 @@ from pathlib import Path
 import requests
 
 try:
-    import google.generativeai as genai
+    from google import genai
 except Exception:  # pragma: no cover - fallback path
     genai = None
 
 try:
-    from google.generativeai import types as genai_types
+    from google.genai import types as genai_types
 except Exception:  # pragma: no cover - fallback path
     genai_types = None
 
@@ -73,17 +73,19 @@ def _extract_json_object(text: str) -> dict:
 
 def _sdk_audio_part(audio_bytes: bytes):
     if genai_types is None or not hasattr(genai_types, "Part") or not hasattr(genai_types.Part, "from_bytes"):
-        raise RuntimeError("google-generativeai audio Part support is unavailable.")
+        raise RuntimeError("google-genai audio Part support is unavailable.")
     return genai_types.Part.from_bytes(data=audio_bytes, mime_type="audio/webm")
 
 
 def _sdk_transcribe(audio_bytes: bytes, api_key: str) -> str:
     if genai is None:
-        raise RuntimeError("google-generativeai is not available.")
+        raise RuntimeError("google-genai is not available.")
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content([VOICE_TO_FORM_PROMPT, _sdk_audio_part(audio_bytes)])
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL_NAME,
+        contents=[VOICE_TO_FORM_PROMPT, _sdk_audio_part(audio_bytes)]
+    )
     raw_text = getattr(response, "text", "") or ""
     return raw_text
 
