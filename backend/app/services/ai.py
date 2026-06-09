@@ -180,7 +180,7 @@ Reformat page content into HTML that works for this user's brain.
 
 
 async def call_gemini(page_text: str, profile: dict, feedback_summary: str, language: str = "English") -> str:
-    """Call Gemini Flash via direct API with key rotation."""
+    """Call Gemini Flash via direct API with key rotation and retries for transient errors."""
     system_prompt = _build_system_prompt(profile, feedback_summary, language)
     safe_text = _escape_tags(page_text)
 
@@ -197,24 +197,40 @@ async def call_gemini(page_text: str, profile: dict, feedback_summary: str, lang
             "generationConfig": {"maxOutputTokens": 50000},
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                f"{_GEMINI_BASE}?key={key}",
-                json=payload,
-            )
+        # Retry logic for transient errors (503, 500, etc)
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(
+                        f"{_GEMINI_BASE}?key={key}",
+                        json=payload,
+                    )
+                
+                if response.status_code == 429:
+                    async with _key_lock:
+                        _rate_limited_keys.add(key)
+                    # Brief wait before retrying with next key (outer loop)
+                    await asyncio.sleep(0.5)
+                    break # Break inner retry loop to try next key
 
-        if response.status_code == 429:
-            async with _key_lock:
-                _rate_limited_keys.add(key)
-            # Brief wait before retrying with next key
-            await asyncio.sleep(0.5)
-            continue
+                if response.status_code >= 500:
+                    # Transient server error (like 503 Service Unavailable)
+                    if retry < max_retries - 1:
+                        await asyncio.sleep(2 ** retry) # Exponential backoff: 1s, 2s
+                        continue
+                
+                response.raise_for_status()
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except httpx.RequestError as e:
+                # Network errors
+                if retry < max_retries - 1:
+                    await asyncio.sleep(2 ** retry)
+                    continue
+                raise e
 
-        response.raise_for_status()
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-
-    raise RuntimeError("All Gemini API keys exhausted.")
+    raise RuntimeError("All Gemini API keys exhausted or rate limited.")
 
 
 async def call_claude(page_text: str, profile: dict, feedback_summary: str, language: str = "English") -> str:
@@ -274,17 +290,28 @@ async def generate_sq4r_questions(page_text: str, profile_type: str) -> list[str
         "generationConfig": {"maxOutputTokens": 200},
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
-        response.raise_for_status()
-        data = response.json()
-        raw = data["candidates"][0]["content"]["parts"][0]["text"]
-        
-        questions = _extract_json_array(raw)
-        return questions[:3] if isinstance(questions, list) else None
-    except Exception:
-        return None
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
+            
+            if response.status_code >= 500:
+                if retry < max_retries - 1:
+                    await asyncio.sleep(2 ** retry)
+                    continue
+
+            response.raise_for_status()
+            data = response.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            
+            questions = _extract_json_array(raw)
+            return questions[:3] if isinstance(questions, list) else None
+        except Exception:
+            if retry < max_retries - 1:
+                await asyncio.sleep(2 ** retry)
+                continue
+            return None
 
 
 SECTION_SYSTEM_PROMPT = """You are a document structure analyser.
@@ -314,18 +341,33 @@ async def analyse_sections(page_text: str) -> list[dict]:
         },
     }
 
-    async with httpx.AsyncClient(timeout=45) as client:
-        response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
-    
-    response.raise_for_status()
-    data = response.json()
-    raw = data["candidates"][0]["content"]["parts"][0]["text"]
-    
-    sections = _extract_json_array(raw)
-    if not isinstance(sections, list) or len(sections) == 0:
-        raise ValueError("Invalid sections JSON returned from AI.")
-        
-    return [s for s in sections if s.get("title") and s.get("content")]
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
+            
+            if response.status_code >= 500:
+                if retry < max_retries - 1:
+                    await asyncio.sleep(2 ** retry)
+                    continue
+
+            response.raise_for_status()
+            data = response.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            
+            sections = _extract_json_array(raw)
+            if not isinstance(sections, list) or len(sections) == 0:
+                raise ValueError("Invalid sections JSON returned from AI.")
+                
+            return [s for s in sections if s.get("title") and s.get("content")]
+        except httpx.RequestError:
+            if retry < max_retries - 1:
+                await asyncio.sleep(2 ** retry)
+                continue
+            raise
+        except Exception as e:
+            raise e
 
 
 async def call_document(
@@ -386,9 +428,22 @@ async def call_document(
             "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.25}
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
-        
-        response.raise_for_status()
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    response = await client.post(f"{_GEMINI_BASE}?key={key}", json=payload)
+                
+                if response.status_code >= 500:
+                    if retry < max_retries - 1:
+                        await asyncio.sleep(2 ** retry)
+                        continue
+                
+                response.raise_for_status()
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except httpx.RequestError:
+                if retry < max_retries - 1:
+                    await asyncio.sleep(2 ** retry)
+                    continue
+                raise
