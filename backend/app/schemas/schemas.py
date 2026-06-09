@@ -73,6 +73,7 @@ class ReformatRequest(BaseModel):
     page_title: Optional[str] = Field(None, max_length=500)
     session_difficulty: Literal["hard", "normal", "easy"] = "normal"
     mode: Literal["cards", "fullpage", "document"] = "cards"
+    language: str = "English"
     fingerprint: Optional[str] = Field(None, max_length=100)   # for anonymous/free users
     profile: Optional[CognitiveProfileSchema] = None
 

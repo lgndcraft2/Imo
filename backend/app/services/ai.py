@@ -101,7 +101,7 @@ def _escape_tags(text: str) -> str:
     return text.replace("<source_content>", "&lt;source_content&gt;").replace("</source_content>", "&lt;/source_content&gt;")
 
 
-def _build_system_prompt(profile: dict, feedback_summary: str) -> str:
+def _build_system_prompt(profile: dict, feedback_summary: str, language: str = "English") -> str:
     """
     Constructs the cognitive accessibility system prompt.
     Identical logic to background.js — single source of truth on the server.
@@ -151,6 +151,9 @@ def _build_system_prompt(profile: dict, feedback_summary: str) -> str:
     if notes := profile.get("notes", "").strip():
         lines.append(f'\nDirect note from the user: "{notes}"')
 
+    if language and language.lower() != "english":
+        lines.append(f'\nTRANSLATE ALL CONTENT: You must translate the final reformatted text entirely into {language}. Do not leave any English text in your output (except for proper nouns or code blocks).')
+
     system = f"""You are Ìmọ̀, a cognitive accessibility assistant.
 Reformat page content into HTML that works for this user's brain.
 
@@ -172,9 +175,9 @@ Reformat page content into HTML that works for this user's brain.
     return system
 
 
-async def call_gemini(page_text: str, profile: dict, feedback_summary: str) -> str:
+async def call_gemini(page_text: str, profile: dict, feedback_summary: str, language: str = "English") -> str:
     """Call Gemini Flash via direct API with key rotation."""
-    system_prompt = _build_system_prompt(profile, feedback_summary)
+    system_prompt = _build_system_prompt(profile, feedback_summary, language)
     safe_text = _escape_tags(page_text)
 
     for attempt in range(len(settings.gemini_keys) + 1):
@@ -210,9 +213,9 @@ async def call_gemini(page_text: str, profile: dict, feedback_summary: str) -> s
     raise RuntimeError("All Gemini API keys exhausted.")
 
 
-async def call_claude(page_text: str, profile: dict, feedback_summary: str) -> str:
+async def call_claude(page_text: str, profile: dict, feedback_summary: str, language: str = "English") -> str:
     """Call Claude Sonnet via Anthropic API — deep thinker and institutional users only."""
-    system_prompt = _build_system_prompt(profile, feedback_summary)
+    system_prompt = _build_system_prompt(profile, feedback_summary, language)
     safe_text = _escape_tags(page_text)
 
     async with httpx.AsyncClient(timeout=60) as client:

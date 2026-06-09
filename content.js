@@ -319,6 +319,15 @@ background:rgba(255,255,255,.2)!important;border:1px solid rgba(255,255,255,.4)!
 color:white!important;font-size:11.5px!important;font-weight:600!important;
 cursor:pointer!important;transition:background .15s!important;font-family:inherit!important}
 .sfb-revert:hover{background:rgba(255,255,255,.3)!important}
+.sfb-tts-btn{width:26px!important;height:26px!important;border-radius:50%!important;
+border:none!important;background:rgba(255,255,255,.2)!important;cursor:pointer!important;
+font-size:13px!important;color:white!important;display:flex!important;
+align-items:center!important;justify-content:center!important;
+transition:background .15s,color .15s!important;flex-shrink:0!important;
+font-family:inherit!important;line-height:1!important}
+.sfb-tts-btn:hover{background:rgba(255,255,255,.3)!important}
+.sfb-tts-btn.s-playing{background:white!important;color:${C.green}!important}
+.sfb-tts-btn:disabled{opacity:.4!important;cursor:not-allowed!important}
 
 /* FULL PAGE CONTENT */
 .imo-fp{font-family:'Segoe UI',system-ui,sans-serif!important;
@@ -488,6 +497,16 @@ font-family:inherit!important;line-height:1!important;margin-right:4px!important
 .sc-tts-btn:hover{background:${C.greenLight}!important;color:${C.green}!important}
 .sc-tts-btn.s-playing{background:${C.green}!important;color:white!important}
 .sc-tts-btn:disabled{opacity:.4!important;cursor:not-allowed!important}
+/* TRANSLATION ROW */
+.sp-translate-row{padding:10px 18px 12px!important;border-bottom:1px solid ${C.g100}!important}
+.sp-translate-label{font-size:10px!important;font-weight:600!important;
+  letter-spacing:.06em!important;text-transform:uppercase!important;
+  color:${C.g400}!important;display:block!important;margin-bottom:6px!important}
+.sp-translate-select{width:100%!important;padding:7px 10px!important;
+  border-radius:8px!important;border:1.5px solid ${C.g200}!important;
+  background:${C.g50}!important;color:${C.g700}!important;
+  font-size:12px!important;font-family:inherit!important;cursor:pointer!important}
+.sp-translate-select:focus{border-color:${C.green}!important}
   `;
   document.head.appendChild(s);
 }
@@ -524,7 +543,7 @@ function extractFullPageText() {
   ) || document.body;
   const clone = main.cloneNode(true);
   clone.querySelectorAll(
-    'script,style,nav,footer,header,#imo-fab,#imo-panel,#imo-dock'
+    'script,style,nav,footer,header,#imo-fab,#imo-panel,#imo-dock,#imo-fullpage-bar'
   ).forEach(e => e.remove());
   return clone.innerText.trim().slice(0, 500000);
 }
@@ -551,6 +570,8 @@ function imoStopPageAudio() {
   }
   const btn = document.getElementById('sp-read-aloud-btn');
   if (btn) { btn.classList.remove('s-active'); btn.textContent = '🔊 Read Aloud'; }
+  const sfbTts = document.getElementById('sfb-tts-btn');
+  if (sfbTts) { sfbTts.classList.remove('s-playing'); sfbTts.textContent = '🔊'; sfbTts.disabled = false; }
 }
 
 function imoStopCardAudio(idx) {
@@ -567,7 +588,7 @@ function imoStopAllCardAudio() {
 }
 
 function imoSetVoiceBusy(busy) {
-  document.querySelectorAll('.sp-voice-btn').forEach(b => b.disabled = busy);
+  document.querySelectorAll('.sp-voice-btn, #sfb-tts-btn').forEach(b => b.disabled = busy);
 }
 
 async function imoDetectLanguage() {
@@ -635,6 +656,8 @@ async function imoReadAloudPage() {
   imoPageAudio = audio;
   const btn = document.getElementById('sp-read-aloud-btn');
   if (btn) { btn.classList.add('s-active'); btn.textContent = '⏹ Stop'; }
+  const sfbTts = document.getElementById('sfb-tts-btn');
+  if (sfbTts) { sfbTts.classList.add('s-playing'); sfbTts.textContent = '⏹'; sfbTts.disabled = false; }
   showPanelHint(`Playing (${voice})...`);
   audio.addEventListener('ended', () => imoStopPageAudio());
   audio.addEventListener('error', () => {
@@ -1037,7 +1060,8 @@ function openCard(idx) {
       pageUrl: window.location.href,
       pageTitle: document.title,
       sessionDifficulty: S.sessionDifficulty,
-      mode: 'cards'
+      mode: 'cards',
+      language: document.getElementById('sp-translate-select')?.value || 'English'
     },
     (res) => {
       sec.wrap?.classList.remove('s-loading');
@@ -1510,7 +1534,8 @@ function activateFullPage() {
     pageUrl: window.location.href,
     pageTitle: document.title,
     sessionDifficulty: S.sessionDifficulty,
-    mode: 'fullpage'
+    mode: 'fullpage',
+    language: document.getElementById('sp-translate-select')?.value || 'English'
   }, (res) => {
     if (btn) { btn.disabled = false; btn.textContent = 'Reformat full page'; }
     if (res?.html) {
@@ -1559,9 +1584,13 @@ function showFullPageBar() {
     bar.innerHTML = `
       <span class="sfb-dot"></span>
       <span>Ìmọ̀ — Page reformatted for your brain</span>
-      <button class="sfb-revert" id="sfb-revert-btn">Revert to original</button>`;
+      <div style="display:flex!important;align-items:center!important;gap:8px!important">
+        <button class="sfb-tts-btn" id="sfb-tts-btn" title="Read page aloud">🔊</button>
+        <button class="sfb-revert" id="sfb-revert-btn">Revert to original</button>
+      </div>`;
     document.body.appendChild(bar);
     bar.querySelector('#sfb-revert-btn').addEventListener('click', revertFullPage);
+    bar.querySelector('#sfb-tts-btn').addEventListener('click', imoReadAloudPage);
   }
   requestAnimationFrame(() => requestAnimationFrame(() => bar.classList.add('s-visible')));
 }
@@ -1724,6 +1753,16 @@ function buildFloatingUI() {
         <button class="sp-voice-btn" id="sp-read-aloud-btn" type="button">🔊 Read Aloud</button>
         <button class="sp-voice-btn" id="sp-voice-input-btn" type="button">🎤 Voice</button>
       </div>
+    </div>
+    <div class="sp-translate-row">
+      <span class="sp-translate-label">Output Language</span>
+      <select class="sp-translate-select" id="sp-translate-select">
+        <option value="English">English (Default)</option>
+        <option value="Hausa">Hausa</option>
+        <option value="Yoruba">Yoruba</option>
+        <option value="Igbo">Igbo</option>
+        <option value="Nigerian Pidgin">Nigerian Pidgin</option>
+      </select>
     </div>
     <div class="sp-difficulty-row" id="sp-difficulty-row" style="display:none">
       <span class="sp-difficulty-label">Today's reading feel</span>

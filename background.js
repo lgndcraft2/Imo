@@ -111,6 +111,7 @@ async function callBackendReformat(pageText, profile, providerConfig, options = 
       page_title: options.pageTitle || "",
       session_difficulty: options.sessionDifficulty || "normal",
       mode: options.mode || "cards",
+      language: options.language || "English",
       fingerprint,
       profile: profile // Send local profile
     })
@@ -270,7 +271,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           pageUrl: msg.pageUrl,
           pageTitle: msg.pageTitle,
           sessionDifficulty: msg.sessionDifficulty,
-          mode: msg.mode
+          mode: msg.mode,
+          language: msg.language || "English"
         });
         sendResponse(result);
       } catch (err) {

@@ -148,9 +148,9 @@ async def reformat_page(
     use_claude = await _uses_claude(user, db)
 
     if use_claude:
-        html_task = call_claude(body.page_text, profile, feedback_summary)
+        html_task = call_claude(body.page_text, profile, feedback_summary, body.language)
     else:
-        html_task = call_gemini(body.page_text, profile, feedback_summary)
+        html_task = call_gemini(body.page_text, profile, feedback_summary, body.language)
 
     questions_task = generate_sq4r_questions(
         body.page_text, profile["profile_type"]
